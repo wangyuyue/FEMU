@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-
+#include "stdio.h"
 #include "qemu/osdep.h"
 #include "qemu/units.h"
 #include "hw/i386/x86.h"
@@ -1006,6 +1006,8 @@ void pc_memory_init(PCMachineState *pcms,
      * done for backwards compatibility with older qemus.
      */
     *ram_memory = machine->ram;
+    printf("machine->mem->size %ld\n", (long)((*ram_memory)->size));
+    printf("machine->ram_size %ld\n ", (long)(machine->ram_size));
     ram_below_4g = g_malloc(sizeof(*ram_below_4g));
     memory_region_init_alias(ram_below_4g, NULL, "ram-below-4g", machine->ram,
                              0, x86ms->below_4g_mem_size);

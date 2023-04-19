@@ -1197,6 +1197,7 @@ typedef struct FemuExtCtrlOps {
 
 typedef struct FemuCtrl {
     PCIDevice       parent_obj;
+    MemoryRegion    cxl_cache_mem;
     MemoryRegion    iomem;
     MemoryRegion    ctrl_mem;
     NvmeBar         bar;

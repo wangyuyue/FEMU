@@ -534,9 +534,15 @@ static void femu_realize(PCIDevice *pci_dev, Error **errp)
 {
     FemuCtrl *n = FEMU(pci_dev);
     int64_t bs_size;
-
     nvme_check_size();
-
+    void* cxl_cache;
+    if (posix_memalign(&cxl_cache, 4096, 4*1024ULL*1024ULL))
+        exit(-1);
+    
+    const char* hello = "Hello from FEMU!";
+    memcpy(cxl_cache, hello, 17);
+    memory_region_init_ram_ptr(&(n->cxl_cache_mem), NULL, "cxl_cache", 4ULL << 20, cxl_cache);
+    memory_region_add_subregion(get_system_memory(), 64ULL << 30, &(n->cxl_cache_mem));
     if (nvme_check_constraints(n)) {
         return;
     }
