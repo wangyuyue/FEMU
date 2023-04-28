@@ -896,6 +896,10 @@ static void *ftl_thread(void *arg)
             case NVME_CMD_DSM:
                 lat = 0;
                 break;
+            case NVME_CMD_OFFLOAD:
+                lat = ssd_read(ssd, req);
+                // ftl_err("FTL receive offload command that doesn't access flash\n");
+                break;
             default:
                 //ftl_err("FTL received unkown request type, ERROR\n");
                 ;
@@ -904,7 +908,10 @@ static void *ftl_thread(void *arg)
             req->reqlat = lat;
             req->expire_time += lat;
 
-            rc = femu_ring_enqueue(ssd->to_poller[i], (void *)&req, 1);
+            if (req->cmd.opcode == NVME_CMD_OFFLOAD)
+                rc = femu_ring_enqueue(n->to_runtime, (void*)&req, 1);
+            else
+                rc = femu_ring_enqueue(ssd->to_poller[i], (void *)&req, 1);
             if (rc != 1) {
                 ftl_err("FTL to_poller enqueue failed\n");
             }

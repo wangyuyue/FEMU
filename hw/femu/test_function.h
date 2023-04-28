@@ -1,0 +1,1 @@
+int range_filter(void* buf_in, int size_in, void* buf_out, int size_out, void* arg);

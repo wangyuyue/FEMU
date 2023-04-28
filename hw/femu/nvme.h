@@ -344,6 +344,7 @@ enum NvmeIoCommands {
     NVME_CMD_OC_ERASE           = 0x90,
     NVME_CMD_OC_WRITE           = 0x91,
     NVME_CMD_OC_READ            = 0x92,
+    NVME_CMD_OFFLOAD            = 0x80,
 };
 
 typedef struct NvmeDeleteQ {
@@ -430,6 +431,32 @@ typedef struct NvmeRwCmd {
     uint16_t    apptag;
     uint16_t    appmask;
 } NvmeRwCmd;
+
+typedef struct NvmeComputeCmd {
+    uint8_t     opcode;
+    uint8_t     flags;
+    uint16_t    cid;
+    uint32_t    nsid;
+    uint64_t    rsvd2;
+    uint64_t    mptr;
+    uint64_t    prp1;
+    uint64_t    prp2;
+    uint64_t    slba;
+    uint16_t    nlb;
+    uint16_t    control;
+    uint8_t     func_id;
+    uint8_t     dataflow_type;
+    uint16_t    upstream_id;
+    uint32_t    rsvd[2];
+} NvmeComputeCmd;
+
+enum {
+    BUF_TO_BUF       = 1, // computation happens between buffers
+    SSD_TO_BUF       = 1 << 1,
+    BUF_TO_SSD       = 1 << 2,
+    HOST_TO_BUF      = 1 << 3,
+    BUF_TO_HOST      = 1 << 4,
+};
 
 enum {
     NVME_RW_LR                  = 1 << 15,
@@ -575,6 +602,7 @@ enum NvmeStatusCodes {
     NVME_MORE                   = 0x2000,
     NVME_DNR                    = 0x4000,
     NVME_NO_COMPLETE            = 0xffff,
+    NVME_COMPUTE                = 0x1000,  
 };
 
 #define NVME_SET_CSI(vec, csi) (vec |= (uint8_t)(1 << (csi)))
@@ -1202,6 +1230,11 @@ typedef struct FemuCtrl {
     MemoryRegion    ctrl_mem;
     NvmeBar         bar;
 
+    QemuThread     runtime;
+    int             n_worker;
+    QemuThread*    workers;
+    pqueue_t*       runtime_pq;
+
     /* Coperd: ZNS FIXME */
     QemuUUID        uuid;
     uint32_t        zasl_bs;
@@ -1346,6 +1379,8 @@ typedef struct FemuCtrl {
     char            devname[64];
     struct rte_ring **to_ftl;
     struct rte_ring **to_poller;
+    struct rte_ring *to_runtime;
+    struct rte_ring *isc_task_queue;
     pqueue_t        **pq;
     bool            *should_isr;
     bool            poller_on;
@@ -1468,6 +1503,9 @@ void *nvme_poller(void *arg);
 
 /* NVMe I/O */
 uint16_t nvme_rw(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req);
+
+/* FEMU isc runtime */
+void init_runtime(FemuCtrl *n);
 
 int nvme_register_ocssd12(FemuCtrl *n);
 int nvme_register_ocssd20(FemuCtrl *n);

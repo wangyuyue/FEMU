@@ -71,7 +71,7 @@ static void nvme_process_sq_io(void *opaque, int index_poller)
         if (n->print_log) {
             femu_debug("%s,cid:%d\n", __func__, cmd.cid);
         }
-
+        printf("poller %d (pid %ld) get cmd %d\n", index_poller, pthread_self(), cmd.cid);
         status = nvme_io_cmd(n, &cmd, req);
         if (1 && status == NVME_SUCCESS) {
             req->status = status;
@@ -82,6 +82,8 @@ static void nvme_process_sq_io(void *opaque, int index_poller)
             }
         } else if (status == NVME_SUCCESS) {
             /* Normal I/Os that don't need delay emulation */
+            req->status = status;
+        } else if (status == NVME_COMPUTE) {
             req->status = status;
         } else {
             femu_err("Error IO processed!\n");
@@ -152,13 +154,13 @@ static void nvme_process_cq_cpl(void *arg, int index_poller)
         if (now < req->expire_time) {
             break;
         }
-
         cq = n->cq[req->sq->sqid];
         if (!cq->is_active)
             continue;
         nvme_post_cqe(cq, req);
         QTAILQ_INSERT_TAIL(&req->sq->req_list, req, entry);
         pqueue_pop(pq);
+        printf("poller %d (pid %ld) complete req type-%d\n", index_poller, pthread_self(), req->cmd_opcode);
         processed++;
         n->nr_tt_ios++;
         if (now - req->expire_time >= 20000) {
@@ -412,6 +414,25 @@ static uint16_t nvme_write_uncor(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
     return NVME_SUCCESS;
 }
 
+static uint16_t nvme_exec_function(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
+                                    NvmeRequest *req)
+{
+    printf("nvme exec function\n");
+    NvmeRwCmd *rw = (NvmeRwCmd *)cmd;
+    uint64_t slba = le64_to_cpu(rw->slba);
+    uint32_t nlb  = le16_to_cpu(rw->nlb) + 1;
+
+    if ((slba + nlb) > ns->id_ns.nsze) {
+        nvme_set_error_page(n, req->sq->sqid, cmd->cid, NVME_LBA_RANGE,
+                            offsetof(NvmeRwCmd, nlb), slba + nlb, ns->id);
+        return NVME_LBA_RANGE | NVME_DNR;
+    }
+    
+    femu_ring_enqueue(n->isc_task_queue, (void*)&req, 1);
+    printf("nvme exec function\n");
+    return NVME_COMPUTE;
+}
+
 static uint16_t nvme_io_cmd(FemuCtrl *n, NvmeCmd *cmd, NvmeRequest *req)
 {
     NvmeNamespace *ns;
@@ -450,6 +471,8 @@ static uint16_t nvme_io_cmd(FemuCtrl *n, NvmeCmd *cmd, NvmeRequest *req)
             return nvme_write_uncor(n, ns, cmd, req);
         }
         return NVME_INVALID_OPCODE | NVME_DNR;
+    case NVME_CMD_OFFLOAD:
+        return nvme_exec_function(n, ns, cmd, req);
     default:
         if (n->ext_ops.io_cmd) {
             return n->ext_ops.io_cmd(n, ns, cmd, req);
