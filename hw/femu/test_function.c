@@ -4,14 +4,13 @@
 #include "test_function.h"
 
 int range_filter(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
-    printf("input number %d\n", *(int*)buf_in);
     assert(buf_in != NULL);
     assert(buf_out != NULL);
     int* params, *data_buf;
     int n_integer, min_val, max_val;
     if (arg == NULL){
         params = buf_in;
-        data_buf = (int*)((char*)buf_in + sizeof(int)*3);
+        data_buf = (int*)buf_in + 3;
     } else {
         params = arg;
         data_buf = (int*)buf_in;
@@ -27,5 +26,26 @@ int range_filter(void* buf_in, int size_in, void* buf_out, int size_out, void* a
         }
     }
     *(int*)buf_out = n_out;
+    return 0;
+}
+
+int sum(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
+    assert(buf_in != NULL);
+    assert(buf_out != NULL);
+    int* params, *data_buf;
+    int n_integer;
+    if (arg == NULL){
+        params = buf_in;
+        data_buf = (int*)buf_in + 1;
+    } else {
+        params = arg;
+        data_buf = (int*)buf_in;
+    }
+    n_integer = params[0];
+    int result = 0;
+    for (int i = 0; i < n_integer; i++) {
+        result += data_buf[i];
+    }
+    *(int*)buf_out = result;
     return 0;
 }

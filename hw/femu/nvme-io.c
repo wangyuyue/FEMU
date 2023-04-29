@@ -429,7 +429,6 @@ static uint16_t nvme_exec_function(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
     }
     
     femu_ring_enqueue(n->isc_task_queue, (void*)&req, 1);
-    printf("nvme exec function\n");
     return NVME_COMPUTE;
 }
 
