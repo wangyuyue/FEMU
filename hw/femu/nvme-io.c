@@ -198,6 +198,8 @@ void *nvme_poller(void *arg)
     int index = ((NvmePollerThreadArgument *)arg)->index;
     int i;
 
+    n->poller_thread_id[index] = gettid();
+    femu_log("poller_%d thread id %d\n", index, n->poller_thread_id[index]);
     switch (n->multipoller_enabled) {
     case 1:
         while (1) {

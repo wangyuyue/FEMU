@@ -862,6 +862,8 @@ static void *ftl_thread(void *arg)
 {
     FemuCtrl *n = (FemuCtrl *)arg;
     struct ssd *ssd = n->ssd;
+    ssd->ftl_thread_id = gettid();
+    femu_log("ftl thread id %d\n", ssd->ftl_thread_id);
     NvmeRequest *req = NULL;
     uint64_t lat = 0;
     int rc;

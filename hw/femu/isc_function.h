@@ -35,6 +35,7 @@ enum {
     TASK_BUSY      = 3,
     TASK_COMPLETED = 4,
 };
+void* test_thread(void* arg);
 
 void* worker(void* arg);
 

@@ -1232,6 +1232,7 @@ typedef struct FemuCtrl {
     NvmeBar         bar;
 
     QemuThread     runtime;
+    int            runtime_thread_id;
     int             n_worker;
     QemuThread*    workers;
     pqueue_t*       runtime_pq;
@@ -1322,6 +1323,7 @@ typedef struct FemuCtrl {
     uint8_t     *cmbuf;
 
     QemuThread  *poller;
+    int         *poller_thread_id;
     bool        dataplane_started;
     bool        vector_poll_started;
 

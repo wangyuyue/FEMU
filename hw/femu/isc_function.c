@@ -117,14 +117,21 @@ void* worker(void* arg) {
     return 0;
 }
 
+void* test_thread(void* arg) {
+    int cpu_id = sched_getcpu();
+    femu_log("test thread running on cpu %d\n", cpu_id);
+    return 0;
+}
+
 void* runtime(void* arg) {
     FemuCtrl* n = (FemuCtrl*)arg;
-    // n->workers = malloc(sizeof(QemuThread) * n->n_worker);
-    // for (int i = 0; i < n->n_worker; i++) {
-    //     qemu_thread_create(&n->workers[i], "isc-worker", worker_thread, NULL);
-    // }
     runtime_log("runtime starts running\n");
+    n->runtime_thread_id = gettid();
+    femu_log("runtime thread id %d\n", n->runtime_thread_id);
     while(1) {
+        pthread_t thread;
+        pthread_create(&thread, NULL, test_thread, NULL, QEMU_THREAD_JOINABLE);
+        pthread_join(&thread, NULL);
         NvmeRequest* req;
         int rc;
         if (femu_ring_count(n->isc_task_queue)) {
@@ -145,6 +152,7 @@ void* runtime(void* arg) {
 
             NvmeComputeCmd* comp = (NvmeComputeCmd*)&(req->cmd);
             int dataflow_type = comp->dataflow_type;
+            // currently don't support write data to ssd
             assert((dataflow_type & BUF_TO_SSD) == 0);
             assert((dataflow_type & HOST_TO_BUF) == 0);
             if (comp->dataflow_type & SSD_TO_BUF) {
@@ -248,6 +256,7 @@ void init_runtime(FemuCtrl* n) {
     }
 
     qemu_thread_create(&n->runtime, "isc-runtime", runtime, (void*)n, QEMU_THREAD_JOINABLE);
+
     runtime_log("finish init runtime\n");
 }
 
