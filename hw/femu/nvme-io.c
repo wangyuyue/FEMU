@@ -1,4 +1,5 @@
 #include "./nvme.h"
+#include <pthread.h>
 
 static uint16_t nvme_io_cmd(FemuCtrl *n, NvmeCmd *cmd, NvmeRequest *req);
 
@@ -197,6 +198,10 @@ void *nvme_poller(void *arg)
     FemuCtrl *n = ((NvmePollerThreadArgument *)arg)->n;
     int index = ((NvmePollerThreadArgument *)arg)->index;
     int i;
+
+
+    pthread_setname_np(pthread_self(), "nvme_poller");
+    femu_log("poller_%d thread id %d\n", index, gettid()); 
 
     switch (n->multipoller_enabled) {
     case 1:
