@@ -287,7 +287,7 @@ uint16_t buf_rw(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req)
     SsdDramBackend *b = n->mbe;
     void* mb = b->logical_space;
     if (b->femu_mode != FEMU_BBSSD_MODE) {
-        error_report("FEMU: buf_rw only support black-box SSD");
+        femu_err("buf_rw only support black-box SSD");
     }
     if (req->is_write) {
         memcpy(mb + data_offset, buf, data_size);
@@ -331,7 +331,7 @@ uint16_t buf_dma(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req,
         cur_addr = qsg->sg[sg_cur_index].base + sg_cur_byte;
         cur_len = qsg->sg[sg_cur_index].len - sg_cur_byte;
         if (dma_memory_rw(qsg->as, cur_addr, buf + data_offset, cur_len, dir, MEMTXATTRS_UNSPECIFIED)) {
-            error_report("FEMU: dma_memory_rw error");
+            femu_err("dma_memory_rw error");
         }
         sg_cur_byte += cur_len;
         if (sg_cur_byte == qsg->sg[sg_cur_index].len) {
