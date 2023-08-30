@@ -445,17 +445,19 @@ typedef struct NvmeComputeCmd {
     uint16_t    nlb;
     uint16_t    control;
     uint8_t     func_id;
-    uint8_t     dataflow_type;
+    uint8_t     compute_flag;
     uint16_t    upstream_id;
     uint32_t    rsvd[2];
 } NvmeComputeCmd;
 
 enum {
     BUF_TO_BUF       = 1, // computation happens between buffers
-    SSD_TO_BUF       = 1 << 1,
-    BUF_TO_SSD       = 1 << 2,
+    READ_FLASH       = 1 << 1,
+    WRITE_FLASH      = 1 << 2,
     HOST_TO_BUF      = 1 << 3,
     BUF_TO_HOST      = 1 << 4,
+    RESUBMIT         = 1 << 5,
+    HAS_CONTEXT      = 1 << 6,
 };
 
 enum {
@@ -1381,7 +1383,7 @@ typedef struct FemuCtrl {
     struct rte_ring **to_ftl;
     struct rte_ring **to_poller;
     struct rte_ring *to_runtime;
-    struct rte_ring *isc_task_queue;
+    struct rte_ring *comp_req_queue;
     pqueue_t        **pq;
     bool            *should_isr;
     bool            poller_on;

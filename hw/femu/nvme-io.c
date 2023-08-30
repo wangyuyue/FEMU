@@ -433,7 +433,7 @@ static uint16_t nvme_exec_function(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
         return NVME_LBA_RANGE | NVME_DNR;
     }
     
-    femu_ring_enqueue(n->isc_task_queue, (void*)&req, 1);
+    femu_ring_enqueue(n->comp_req_queue, (void*)&req, 1);
     return NVME_COMPUTE;
 }
 

@@ -49,3 +49,16 @@ int sum(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
     *(int*)buf_out = result;
     return 0;
 }
+
+int traverse(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
+    assert(buf_in != NULL);
+    assert(buf_out != NULL);
+
+    int* next_blk = (int*)buf_in;
+    char* str = (char*)buf_in + sizeof(int);
+
+    // *(int*)arg = *next_blk;
+
+    printf("%d, %s ", *next_blk, str);
+    return 0;
+}
