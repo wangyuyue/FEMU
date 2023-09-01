@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <assert.h>
+#include <string.h>
 #include "test_function.h"
 
 int range_filter(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
@@ -54,11 +55,30 @@ int traverse(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
     assert(buf_in != NULL);
     assert(buf_out != NULL);
 
-    int* next_blk = (int*)buf_in;
+    int next_blk = *(int*)buf_in;
     char* str = (char*)buf_in + sizeof(int);
 
-    // *(int*)arg = *next_blk;
+    tmp_ctx* ctx = (tmp_ctx*)arg;
+    
+    if (ctx) {
+        if (next_blk == -1) {
+            ctx->done = 1;
+        } else {
+            ctx->done = 0;
+            ctx->next_addr[0] = next_blk * 512;
+            ctx->size[0] = 512;
+        }
+    }
+    char* from_str = str;
+    char* to_str = (char*)ctx->content + strlen(ctx->content);
 
-    printf("%d, %s ", *next_blk, str);
+    while(*from_str)
+        *(to_str++) = *(from_str++);
+    *to_str = ' ';
+    printf("%d, %s \n", next_blk, str);
     return 0;
+}
+
+void* content_addr(void* ctx) {
+    return &((tmp_ctx*)ctx)->content;
 }

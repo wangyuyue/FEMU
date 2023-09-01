@@ -72,7 +72,7 @@ static void nvme_process_sq_io(void *opaque, int index_poller)
         if (n->print_log) {
             femu_debug("%s,cid:%d\n", __func__, cmd.cid);
         }
-        printf("poller %d (pid %ld) get cmd %d\n", index_poller, pthread_self(), cmd.cid);
+        // printf("poller %d (pid %ld) get cmd %d\n", index_poller, pthread_self(), cmd.cid);
         status = nvme_io_cmd(n, &cmd, req);
         if (1 && status == NVME_SUCCESS) {
             req->status = status;
@@ -161,7 +161,9 @@ static void nvme_process_cq_cpl(void *arg, int index_poller)
         nvme_post_cqe(cq, req);
         QTAILQ_INSERT_TAIL(&req->sq->req_list, req, entry);
         pqueue_pop(pq);
-        printf("poller %d (pid %ld) complete req type-%d\n", index_poller, pthread_self(), req->cmd_opcode);
+        // printf("poller %d (pid %ld) complete req type-%d\n", index_poller, pthread_self(), req->cmd_opcode);
+        // if (req->cmd_opcode == NVME_CMD_READ)
+        //     printf("read cmd slba %p\n", (void*)((NvmeRwCmd*)&req->cmd)->slba);
         processed++;
         n->nr_tt_ios++;
         if (now - req->expire_time >= 20000) {
@@ -201,7 +203,6 @@ void *nvme_poller(void *arg)
 
 
     pthread_setname_np(pthread_self(), "nvme_poller");
-    femu_log("poller_%d thread id %d\n", index, gettid()); 
 
     switch (n->multipoller_enabled) {
     case 1:
@@ -422,7 +423,6 @@ static uint16_t nvme_write_uncor(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
 static uint16_t nvme_exec_function(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd,
                                     NvmeRequest *req)
 {
-    printf("nvme exec function\n");
     NvmeRwCmd *rw = (NvmeRwCmd *)cmd;
     uint64_t slba = le64_to_cpu(rw->slba);
     uint32_t nlb  = le16_to_cpu(rw->nlb) + 1;

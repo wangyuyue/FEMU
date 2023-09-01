@@ -23,6 +23,7 @@ typedef struct ISC_Task {
     struct ISC_Task* upstream;
     Buffer* in_buf;
     Buffer* out_buf;
+    Buffer* context;
     
     NvmeRequest* req;
     NvmeComputeCmd cmd;
@@ -72,8 +73,12 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task);
 
 uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req);
 
-uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size);
+uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write);
 
 // uint16_t nvme_rw2(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req);
 
+#if 0
 #define runtime_log(fmt, ...) do { printf("[ISC RUNTIME] Log: " fmt, ## __VA_ARGS__); } while (0)
+#else
+#define runtime_log(fmt, ...) do { } while (0)
+#endif
