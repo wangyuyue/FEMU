@@ -58,7 +58,7 @@ int traverse(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
     int next_blk = *(int*)buf_in;
     char* str = (char*)buf_in + sizeof(int);
 
-    tmp_ctx* ctx = (tmp_ctx*)arg;
+    TaskContext* ctx = (TaskContext*)arg;
     
     if (ctx) {
         if (next_blk == -1) {
@@ -70,15 +70,11 @@ int traverse(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
         }
     }
     char* from_str = str;
-    char* to_str = (char*)ctx->content + strlen(ctx->content);
+    char* to_str = APP_CONTEXT(ctx) + strlen(APP_CONTEXT(ctx));
 
     while(*from_str)
         *(to_str++) = *(from_str++);
     *to_str = ' ';
     printf("%d, %s \n", next_blk, str);
     return 0;
-}
-
-void* content_addr(void* ctx) {
-    return &((tmp_ctx*)ctx)->content;
 }

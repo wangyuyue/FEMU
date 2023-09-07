@@ -1,14 +1,29 @@
 #include "isc_function.h"
+#include "db_types.h"
 
-// typedef struct isc_task {
-//     NvmeCmd cmd,
-//     char* task_name
-// }
 isc_function function_list[] = {
     [0] = range_filter,
     [1] = sum,
     [2] = traverse,
     [3] = kv_get,
+    [4] = kv_range,
+};
+
+int param_size[] = {
+    [2] = 512,
+    [3] = PARAM_SIZE(KVGetContext),
+    [4] = PARAM_SIZE(KVRangeContext),
+};
+
+int app_context_size[] = {
+    [2] = 512,
+    [3] = sizeof(KVGetContext),
+    [4] = sizeof(KVRangeContext),
+};
+
+int ret_val_size[] = {
+    [3] = sizeof(KVGetRetVal),
+    [4] = sizeof(KVRangeRetVal),
 };
 
 void free_buf(Buffer* buf) {
@@ -55,7 +70,7 @@ static void set_pos(void *a, size_t pos)
     ((NvmeRequest *)a)->pos = pos;
 }
 
-#define N_TASK_ENTRY 10
+#define N_TASK_ENTRY 64
 
 
 ISC_Task task_list[N_TASK_ENTRY];
@@ -83,10 +98,10 @@ ISC_Task* alloc_task(NvmeRequest* req) {
     task->function = function_list[task->cmd.func_id];
     
     if (COMPUTE_FLAG(&req->cmd) & RESUBMIT) {
-        task->context = alloc_buf(sizeof(tmp_ctx));
+        task->context = alloc_buf(sizeof(TaskContext) + app_context_size[task->cmd.func_id]);
     }
 
-    runtime_log("assgin task %d status valid\n", task->task_id);
+    runtime_log("assign task %d status valid\n", task->task_id);
     task->status = TASK_VALID;
     req->isc_task_ptr = (uint64_t)task;
 
@@ -134,6 +149,32 @@ void check_early_respond_req(FemuCtrl* n, NvmeRequest* req) {
     return;
 }
 
+static void record_time(char op_c) {
+#if 0
+    static int n_record = 0;
+    static uint64_t record_time[1000];
+    switch (op_c)
+    {
+    case 'r':
+        record_time[n_record++] = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+        break;
+    case 'p':
+        printf("time elapse:\n");
+        for (int i = 1; i < n_record; i ++) {
+            uint64_t diff = record_time[i] - record_time[i-1];
+            printf("[%ld us, %ld ns]\n", diff / 1000, diff % 1000);
+        }
+        n_record = 0;
+        break;
+    default:
+        printf("Unsupported latency record op: %c\n", op_c);
+        exit(-1);
+    }
+#else
+    return;
+#endif
+}
+
 void* worker(void* arg) {
     ISC_Task* task = (ISC_Task*)arg;
     runtime_log("task %d begin working...\n", task->task_id);
@@ -141,7 +182,13 @@ void* worker(void* arg) {
     char* context_space = NULL;
     if (task->context)
         context_space = task->context->space;
+
+    record_time('r');
+
     func(task->in_buf->space, task->in_buf->size, task->out_buf->space, task->out_buf->size, context_space);
+
+    record_time('r');
+    
     runtime_log("assign task %d status completed\n", task->task_id);
     task->status = TASK_COMPLETED;
     return 0;
@@ -228,7 +275,7 @@ void launch_task(ISC_Task* task) {
     runtime_log("assign task %d status busy\n", task->task_id);
     
     task->status = TASK_BUSY;
-    task->thread = malloc(sizeof(QemuThread));
+    // task->thread = malloc(sizeof(QemuThread));
     
     worker(task);
     // qemu_thread_create(task->thread, "isc-worker", worker, task, QEMU_THREAD_JOINABLE);
@@ -243,12 +290,12 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
 
     if (task->blocking) {
         runtime_log("get a completed blocking task %d\n", task->task_id);
-                    
+
         NvmeRequest* req = task->req;
 
         if (COMPUTE_FLAG(&req->cmd) & RESUBMIT) {
             runtime_log("it is a resubmit compute request\n");
-            tmp_ctx* ctx = task->context->space;
+            TaskContext* ctx = task->context->space;
             if (ctx->done == 0) {
                 uint64_t next_blk = ctx->next_addr[0];
                 NvmeComputeCmd* comp = (NvmeComputeCmd*)&req->cmd;
@@ -256,19 +303,25 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
                 task->status = TASK_VALID;
                 runtime_log("next block %p, resubmit\n", (void*)next_blk);
                 buf_rw(n, req);
+                
+                req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
                 enqueue_ftl(n, req);
                 return;
             }
         }
         int is_write = 0;
-
+        
         buf_dma(n, req, task->out_buf->space, task->out_buf->size, is_write);
+
+        record_time('r');
 
         req->cqe.res64 = task->task_id;
         enqueue_poller(n, req);
 
         runtime_log("assign task %d status empty\n", task->task_id);
         clear_task(task);
+
+        record_time('p');
     }
 }
 
@@ -286,7 +339,7 @@ void* runtime(void* arg) {
 
             if (COMPUTE_FLAG(&req->cmd) & HAS_CONTEXT) {
                 int is_write = 1;
-                buf_dma(n, req, content_addr(task->context->space), 512, is_write);
+                buf_dma(n, req, APP_CONTEXT(task->context->space), param_size[task->cmd.func_id], is_write);
             }
 
             int compute_flag = COMPUTE_FLAG(&req->cmd);
@@ -300,9 +353,14 @@ void* runtime(void* arg) {
                 ISC_Task* upstream_task = get_task_by_id(upstream_id);
                 assert(upstream_task != NULL);
                 task->upstream = upstream_task;
+                
                 task->in_buf = upstream_task->out_buf;
                 task->in_buf->ref += 1;
-                task->out_buf = alloc_buf(task->in_buf->size);
+
+                int out_buf_size = (ret_val_size[task->cmd.func_id] == 0) ? \
+                                task->in_buf->size : ret_val_size[task->cmd.func_id];
+ 
+                task->out_buf = alloc_buf(out_buf_size);
                 check_early_respond_req(n, req);
             }
         }
@@ -380,8 +438,12 @@ uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req)
         task->in_buf = alloc_buf(data_size);
     void* buf = task->in_buf->space;
     
-    if (task->out_buf == NULL)
-        task->out_buf = alloc_buf(data_size);
+    if (task->out_buf == NULL) {
+        int out_buf_size = (ret_val_size[task->cmd.func_id] == 0) ? \
+                        task->in_buf->size : ret_val_size[task->cmd.func_id];
+ 
+        task->out_buf = alloc_buf(out_buf_size);
+    }
 
     SsdDramBackend *b = n->mbe;
     void* mb = b->logical_space;
@@ -407,7 +469,7 @@ uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is
     if (nvme_map_prp(&req->qsg, &req->iov, prp1, prp2, data_size, n)) {
         nvme_set_error_page(n, req->sq->sqid, comp->cid, NVME_INVALID_FIELD,
                             offsetof(NvmeRwCmd, prp1), 0, req->ns->id);
-        femu_err("nvme map prp error");
+        femu_err("nvme map prp error\n");
         return NVME_INVALID_FIELD | NVME_DNR;
     }
 

@@ -81,17 +81,23 @@ struct Query {
     ptr__t current_parent;
 };
 
-/* struct used to send context to CSD */
-struct CSDContext {
+typedef struct KVGetContext {
     /* everything is a long to make debugging in gdb easier */
-    key__t key;
-    long found;
+    struct {
+        key__t key;
+    } params;
     long state_flags;
 
     /* Used to store file offset to the value once we've located it via a leaf node */
     ptr__t value_ptr;
-};
+} KVGetContext;
 
+typedef struct KVGetRetVal {
+    union {
+        char found;
+        val__t val;
+    };
+} KVGetRetVal;
 
 #define SG_KEYS 32
 
@@ -159,6 +165,34 @@ struct RangeQuery {
     Node _current_node;
 };
 
+typedef struct KVRangeContext {
+    struct {
+        key__t range_begin;
+        key__t range_end;
+        unsigned int flags;
+        unsigned int agg_op;
+        
+        ptr__t _resume_from_leaf;
+        unsigned int _node_key_ix;
+        unsigned int _state;    
+    } params;
+    int len;
+    Node _current_node;
+} KVRangeContext;
+
+typedef struct KVRangeRetVal {
+    key__t range_begin;
+    unsigned int flags;
+    
+    ptr__t _resume_from_leaf;
+    unsigned int _node_key_ix;
+    int len;
+    union {
+        struct KeyValue kv[RNG_KEYS];
+        long agg_value;
+    };
+} KVRangeRetVal;
+
 static inline int empty_range(struct RangeQuery const *query) {
     if (query->range_begin > query->range_end) {
         return 1;
@@ -191,11 +225,10 @@ static inline int prep_range_resume(struct RangeQuery *query) {
     return empty_range(query);
 }
 
-/* Mark a range query complete; `empty_range` will return true after marking the query with this function */
-static __inline void mark_range_query_complete(struct RangeQuery *query) {
-    query->range_begin = query->range_end;
-    query->flags |= RNG_BEGIN_EXCLUSIVE;
-    query->flags &= ~RNG_END_INCLUSIVE;
+static __inline void mark_range_query_complete(struct KVRangeContext *query) {
+    query->params.range_begin = query->params.range_end;
+    query->params.flags |= RNG_BEGIN_EXCLUSIVE;
+    query->params.flags &= ~RNG_END_INCLUSIVE;
 }
 
 /**

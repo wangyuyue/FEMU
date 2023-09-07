@@ -13,7 +13,7 @@ Buffer* alloc_buf(int size);
 
 typedef struct ISC_Task {
     int task_id;
-    int duration;
+    uint64_t duration;
     int status;
     int blocking;
 
@@ -74,6 +74,8 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task);
 uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req);
 
 uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write);
+
+#define PARAM_SIZE(TYPE) (sizeof(((TYPE*)0)->params))
 
 // uint16_t nvme_rw2(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req);
 

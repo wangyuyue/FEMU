@@ -1,12 +1,7 @@
-#include <linux/bpf.h>
 #include <stdio.h>
 #include <string.h>
 #include "db_types.h"
 #include "test_function.h"
-
-#ifndef NULL
-#define NULL 0
-#endif
 
 #if 0
 #define dbg_print(...) printf(__VA_ARGS__)
@@ -54,10 +49,11 @@ static __inline ptr__t nxt_node(unsigned long key, Node *node) {
 #define EBPF_CONTEXT_MASK SG_KEYS - 1
 
 int kv_get(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
-    tmp_ctx* ctx = (tmp_ctx*) arg;
-    struct CSDContext *query = (struct CSDContext*) ctx->content;
-    Node *node = (Node *) buf_in;
+    TaskContext* ctx = (TaskContext*)arg;
+    KVGetContext *query = (KVGetContext*)APP_CONTEXT(ctx);
 
+    Node *node = (Node *) buf_in;
+    KVGetRetVal* ret_val = (KVGetRetVal*)buf_out;
     /* Three cases:
      *
      * 1. We've found the log offset in the previous iteration and are
@@ -78,8 +74,7 @@ int kv_get(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
         dbg_print("simplekv-bpf: case 1 - value found\n");
 
         ptr__t offset = query->value_ptr & (BLK_SIZE - 1);
-        query->found = 1;
-        memcpy(buf_out, (char*)node + offset, sizeof(val__t));
+        memcpy(ret_val->val, (char*)node + offset, sizeof(val__t));
             
         ctx->done = 1;
         return 0;
@@ -90,29 +85,28 @@ int kv_get(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
         dbg_print("simplekv-bpf: case 2 - verify key & get last block\n");
 
         query->state_flags = REACHED_LEAF;
-        if (!key_exists(query->key, node)) {
+        if (!key_exists(query->params.key, node)) {
             dbg_print("simplekv-bpf: key doesn't exist\n");
 
-            query->found = 0;
-            *(char*)buf_out = '!';
+            ret_val->found = '!';
 
             ctx->done = 1;
             return 0;
         }
         query->state_flags = AT_VALUE;
-        query->value_ptr = decode(nxt_node(query->key, node));
+        query->value_ptr = decode(nxt_node(query->params.key, node));
         /* Need to submit a request for base of the block containing our offset */
         ptr__t base = query->value_ptr & ~(BLK_SIZE - 1);
         ctx->next_addr[0] = base;
         ctx->size[0] = BLK_SIZE;
-        dbg_print("key is %ld, next address: %p\n", query->key, (void*)(ctx->next_addr[0] & ~(BLK_SIZE - 1)));
+        dbg_print("key is %ld, next address: %p\n", query->params.key, (void*)(ctx->next_addr[0] & ~(BLK_SIZE - 1)));
         return 0;
     }
 
     /* Case 3: at an internal node, keep going */
     dbg_print("simplekv-bpf: case 3 - internal node\n");
-    ctx->next_addr[0] = decode(nxt_node(query->key, node));
-    dbg_print("key is %ld, next address: %p\n", query->key, (void*)(ctx->next_addr[0] & ~(BLK_SIZE - 1)));
+    ctx->next_addr[0] = decode(nxt_node(query->params.key, node));
+    dbg_print("key is %ld, next address: %p\n", query->params.key, (void*)(ctx->next_addr[0] & ~(BLK_SIZE - 1)));
     ctx->size[0] = BLK_SIZE;
     return 0;
 }
