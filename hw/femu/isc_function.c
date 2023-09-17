@@ -398,7 +398,7 @@ void init_runtime(FemuCtrl* n) {
         abort();
     }
 
-    qemu_thread_create(&n->runtime, "isc-runtime", runtime, (void*)n, QEMU_THREAD_JOINABLE);
+    qemu_thread_create(&n->runtime, "FEMU-RUNTIME", runtime, (void*)n, QEMU_THREAD_JOINABLE);
     runtime_log("finish init runtime\n");
 }
 

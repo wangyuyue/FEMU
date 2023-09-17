@@ -202,8 +202,6 @@ void *nvme_poller(void *arg)
     int i;
 
 
-    pthread_setname_np(pthread_self(), "nvme_poller");
-
     switch (n->multipoller_enabled) {
     case 1:
         while (1) {

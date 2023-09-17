@@ -275,7 +275,7 @@ static void nvme_init_poller(FemuCtrl *n)
     for (i = 1; i <= n->nr_pollers; i++) {
         args[i].n = n;
         args[i].index = i;
-        qemu_thread_create(&n->poller[i], "femu-nvme-poller", nvme_poller,
+        qemu_thread_create(&n->poller[i], "FEMU-POLLER", nvme_poller,
                 &args[i], QEMU_THREAD_JOINABLE);
         femu_debug("femu-nvme-poller [%d] created ...\n", i - 1);
     }

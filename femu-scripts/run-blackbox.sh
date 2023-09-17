@@ -18,7 +18,7 @@ nchs=8
 ssd_size=12288		# in MegaBytes
 
 # Latency in nanoseconds
-pg_rd_lat=40000
+pg_rd_lat=7000
 pg_wr_lat=200000
 blk_er_lat=2000000
 ch_xfer_lat=0
@@ -60,7 +60,7 @@ if [[ ! -e "$OSIMGF" ]]; then
 fi
 
 sudo x86_64-softmmu/qemu-system-x86_64 \
-    -name "FEMU-BBSSD-VM" \
+    -name guest="FEMU-BBSSD-VM",debug-threads=on \
     -enable-kvm \
     -cpu host \
     -smp 4 \
@@ -72,4 +72,5 @@ sudo x86_64-softmmu/qemu-system-x86_64 \
     -net user,hostfwd=tcp::8080-:22 \
     -net nic,model=virtio \
     -nographic \
+    --overcommit cpu-pm=on \
     -qmp unix:./qmp-sock,server,nowait 2>&1 | tee log
