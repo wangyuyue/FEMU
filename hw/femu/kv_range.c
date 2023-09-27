@@ -201,8 +201,11 @@ int kv_range(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
         dbg_print("                     start with resume state\n");
 
     switch (query->params._state) {
-        case RNG_TRAVERSE:
-            return traverse_index(context, node, ret_val);
+        case RNG_TRAVERSE: {
+            int ret = traverse_index(context, node, ret_val);
+            dbg_print("RNG_TRAVERSE return\n");
+            return ret;
+        }
         case RNG_READ_NODE:
             query->params._state = RNG_RESUME;
             /* FALL THROUGH */
@@ -210,11 +213,13 @@ int kv_range(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
             query->_current_node = *node;
             int ret = process_leaf(context, node, ret_val);
             update_retval(context, ret_val);
+            dbg_print("RNG_RESUME return\n");
             return ret;
         }
         case RNG_READ_VALUE: {
             int ret = process_value(context, node, ret_val);
             update_retval(context, ret_val);
+            dbg_print("RNG_READ_VALUE return\n");
             return ret;
         }
         default:

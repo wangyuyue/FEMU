@@ -1,5 +1,6 @@
 #include "isc_function.h"
 #include "db_types.h"
+#include "isc_cc.h"
 
 isc_function function_list[] = {
     [0] = range_filter,
@@ -276,7 +277,7 @@ void launch_task(ISC_Task* task) {
     
     task->status = TASK_BUSY;
     // task->thread = malloc(sizeof(QemuThread));
-    
+    // hello_world();
     worker(task);
     // qemu_thread_create(task->thread, "isc-worker", worker, task, QEMU_THREAD_JOINABLE);
 }
@@ -307,6 +308,8 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
                 req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
                 enqueue_ftl(n, req);
                 return;
+            } else {
+                // printf("task %d done\n", task->task_id);
             }
         }
         int is_write = 0;
@@ -347,7 +350,9 @@ void* runtime(void* arg) {
             assert((compute_flag & HOST_TO_BUF) == 0);
             if (compute_flag & READ_FLASH) {
                 buf_rw(n, req);
+                // req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
                 enqueue_ftl(n, req);
+                record_time('r');
             } else {
                 int upstream_id = task->cmd.upstream_id;
                 ISC_Task* upstream_task = get_task_by_id(upstream_id);

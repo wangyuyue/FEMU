@@ -1010,6 +1010,7 @@ typedef struct NvmeRequest {
     QEMUSGList              qsg;
     QEMUIOVector            iov;
     QTAILQ_ENTRY(NvmeRequest)entry;
+    int64_t                 valid_time;
     int64_t                 stime;
     int64_t                 reqlat;
     int64_t                 gcrt;

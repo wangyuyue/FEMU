@@ -64,7 +64,7 @@ static void nvme_process_sq_io(void *opaque, int index_poller)
         QTAILQ_REMOVE(&sq->req_list, req, entry);
         memset(&req->cqe, 0, sizeof(req->cqe));
         /* Coperd: record req->stime at earliest convenience */
-        req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+        req->valid_time = req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
         req->cqe.cid = cmd.cid;
         req->cmd_opcode = cmd.opcode;
         memcpy(&req->cmd, &cmd, sizeof(NvmeCmd));
@@ -161,6 +161,8 @@ static void nvme_process_cq_cpl(void *arg, int index_poller)
         nvme_post_cqe(cq, req);
         QTAILQ_INSERT_TAIL(&req->sq->req_list, req, entry);
         pqueue_pop(pq);
+
+        // printf("Total req lifetime %f (us), expect %f (us)\n", (double)(now - req->valid_time) / 1000, (double)(req->expire_time - req->valid_time) / 1000);
         // printf("poller %d (pid %ld) complete req type-%d\n", index_poller, pthread_self(), req->cmd_opcode);
         // if (req->cmd_opcode == NVME_CMD_READ)
         //     printf("read cmd slba %p\n", (void*)((NvmeRwCmd*)&req->cmd)->slba);
