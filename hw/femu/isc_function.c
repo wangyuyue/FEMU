@@ -336,6 +336,7 @@ void* runtime(void* arg) {
     // }
     runtime_log("runtime starts running\n");
     while(1) {
+        hello_world();
         NvmeRequest* req = dequeue_comp_req(n);
         if (req) {
             ISC_Task* task = alloc_task(req);
