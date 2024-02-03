@@ -2,15 +2,18 @@ softmmu_ss.add(when: 'CONFIG_FEMU_PCI', if_true: files( 'dma.c', 'intr.c', 'nvme
 softmmu_ss.add(when: 'CONFIG_FEMU_PCI', if_true: files('kv_get.c', 'kv_range.c','test_function.c', 'isc_function.c'))
 
 bighash_deps = []
-folly_dep = cxx.find_library('folly', dirs: '/usr/lib')
-fmt_dep = cxx.find_library('fmt', dirs: '/usr/lib')
+local_include = include_directories('/home/yuyue/.local/include')
+local_lib = '/home/yuyue/.local/lib'
+folly_dep = cxx.find_library('folly', dirs: local_lib)
+fmt_dep = cxx.find_library('fmt', dirs: local_lib)
 iberty_dep = cxx.find_library('iberty', dirs: '/usr/lib')
 
 bighash_deps+= [folly_dep, fmt_dep, iberty_dep]
 bighash_deps+= [dependency('glog')]
 bighash_deps+= [dependency('double-conversion')]
 
-libbighash = static_library('libbighash', sources: 'isc_cc.cpp', dependencies: bighash_deps)
+cache_files = ['flash-cache/bighash/Bucket.cpp', 'flash-cache/bighash/BucketStorage.cpp', 'flash-cache/common/Buffer.cpp', 'flash-cache/common/Hash.cpp', 'flash-cache/common/Types.cpp']
+libbighash = static_library('libbighash', sources: files('isc_cc.cpp', cache_files), dependencies: bighash_deps, include_directories: local_include, cpp_args: ['-Wno-undef'])
 
 bighash = declare_dependency(link_with : libbighash)
 

@@ -8,23 +8,28 @@ isc_function function_list[] = {
     [2] = traverse,
     [3] = kv_get,
     [4] = kv_range,
+    [5] = print_bucket,
+    [6] = bighash_lookup,
 };
 
 int param_size[] = {
     [2] = 512,
     [3] = PARAM_SIZE(KVGetContext),
     [4] = PARAM_SIZE(KVRangeContext),
+    [6] = 512,
 };
 
 int app_context_size[] = {
     [2] = 512,
     [3] = sizeof(KVGetContext),
     [4] = sizeof(KVRangeContext),
+    [6] = 512,
 };
 
 int ret_val_size[] = {
     [3] = sizeof(KVGetRetVal),
     [4] = sizeof(KVRangeRetVal),
+    [6] = 4096,
 };
 
 void free_buf(Buffer* buf) {
@@ -98,7 +103,7 @@ ISC_Task* alloc_task(NvmeRequest* req) {
     memcpy(&(task->cmd), &(req->cmd), sizeof(NvmeComputeCmd));
     task->function = function_list[task->cmd.func_id];
     
-    if (COMPUTE_FLAG(&req->cmd) & RESUBMIT) {
+    if (COMPUTE_FLAG(&req->cmd) & HAS_CONTEXT) {
         task->context = alloc_buf(sizeof(TaskContext) + app_context_size[task->cmd.func_id]);
     }
 
@@ -181,11 +186,13 @@ void* worker(void* arg) {
     runtime_log("task %d begin working...\n", task->task_id);
     isc_function func = task->function;
     char* context_space = NULL;
-    if (task->context)
+    if (task->context) {
+        femu_log("task %d has context\n", task->task_id);
         context_space = task->context->space;
+    }
 
     record_time('r');
-
+    
     func(task->in_buf->space, task->in_buf->size, task->out_buf->space, task->out_buf->size, context_space);
 
     record_time('r');
@@ -336,14 +343,16 @@ void* runtime(void* arg) {
     // }
     runtime_log("runtime starts running\n");
     while(1) {
-        hello_world();
+        // hello_world();
         NvmeRequest* req = dequeue_comp_req(n);
         if (req) {
             ISC_Task* task = alloc_task(req);
 
             if (COMPUTE_FLAG(&req->cmd) & HAS_CONTEXT) {
                 int is_write = 1;
+                runtime_log("compute req has context, write context to device memory\n");
                 buf_dma(n, req, APP_CONTEXT(task->context->space), param_size[task->cmd.func_id], is_write);
+                runtime_log("finish device memory write\n");
             }
 
             int compute_flag = COMPUTE_FLAG(&req->cmd);
@@ -408,6 +417,23 @@ void init_runtime(FemuCtrl* n) {
     runtime_log("finish init runtime\n");
 }
 
+uint16_t flash_dma(FemuCtrl *n, Buffer* buf, uint64_t data_size, uint64_t flash_offset, isc_dma_direction dir) {
+    SsdDramBackend *b = n->mbe;
+    void* mb = b->logical_space;
+    assert(b->femu_mode == FEMU_BBSSD_MODE, "flash_dma only support black-box SSD");
+    switch (dir) {
+        case ISC_READ_FLASH:
+            memcpy(buf->space, mb + flash_offset, data_size);
+            break;
+        case ISC_WRITE_FLASH:
+            memcpy(mb + + flash_offset, buf->space, data_size);
+            break;
+        default:
+            femu_err("Unsupported flash_dma direction\n");
+    }
+    return 0;
+}
+
 uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req)
 {
     NvmeNamespace* ns = req->ns;
@@ -451,18 +477,7 @@ uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req)
         task->out_buf = alloc_buf(out_buf_size);
     }
 
-    SsdDramBackend *b = n->mbe;
-    void* mb = b->logical_space;
-    if (b->femu_mode != FEMU_BBSSD_MODE) {
-        femu_err("buf_rw only support black-box SSD");
-    }
-    if (req->is_write) {
-        memcpy(mb + data_offset, buf, data_size);
-    } else {
-        memcpy(buf, mb + data_offset, data_size);
-    }
-
-    return 0;
+    return flash_dma(n, task->in_buf, data_size, data_offset, ISC_READ_FLASH);
 }
 
 uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write) {
@@ -491,6 +506,7 @@ uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is
     DMADirection dir = DMA_DIRECTION_FROM_DEVICE;
 
     if (is_write) {
+        runtime_log("buf_dma write\n");
         dir = DMA_DIRECTION_TO_DEVICE;
     }
 
@@ -508,7 +524,12 @@ uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is
 
         data_offset += cur_len;
     }
+    runtime_log("dma length: %ld\n", data_offset);
     qemu_sglist_destroy(qsg);
-    
+
+    // print buf content
+    for (int i = 0; i < 50; i++) {
+        printf("%d ", ((char*)buf)[i]);
+    }
     return NVME_SUCCESS;
 }

@@ -11,6 +11,13 @@ void free_buf(Buffer* buf);
 
 Buffer* alloc_buf(int size);
 
+typedef enum {
+    ISC_READ_HOST = 0,
+    ISC_WRITE_HOST = 1,
+    ISC_READ_FLASH = 2,
+    ISC_WRITE_FLASH = 3,
+} isc_dma_direction;
+
 typedef struct ISC_Task {
     int task_id;
     uint64_t duration;
@@ -24,6 +31,9 @@ typedef struct ISC_Task {
     Buffer* in_buf;
     Buffer* out_buf;
     Buffer* context;
+
+    Buffer* dma_buf;
+    isc_dma_direction dir;
     
     NvmeRequest* req;
     NvmeComputeCmd cmd;
@@ -79,7 +89,7 @@ uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is
 
 // uint16_t nvme_rw2(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req);
 
-#if 0
+#if 1
 #define runtime_log(fmt, ...) do { printf("[ISC RUNTIME] Log: " fmt, ## __VA_ARGS__); } while (0)
 #else
 #define runtime_log(fmt, ...) do { } while (0)

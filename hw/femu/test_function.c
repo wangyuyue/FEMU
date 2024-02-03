@@ -76,5 +76,6 @@ int traverse(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
         *(to_str++) = *(from_str++);
     *to_str = ' ';
     printf("%d, %s \n", next_blk, str);
+    ctx->done = 1;
     return 0;
 }
