@@ -16,7 +16,19 @@ typedef enum {
     ISC_WRITE_HOST = 1,
     ISC_READ_FLASH = 2,
     ISC_WRITE_FLASH = 3,
-} isc_dma_direction;
+} ISC_DMA_Direction;
+
+typedef struct DMA_Vec_Entry {
+    void* buf;
+    uint64_t offset;
+    uint32_t size;
+    ISC_DMA_Direction dir;
+} DMA_Vec_Entry;
+
+typedef struct DMA_Vec {
+    int nvec;
+    DMA_Vec_Entry* vec; // Pointer to an array of DMA_Vec_Entry structures
+} DMA_Vec;
 
 typedef struct ISC_Task {
     int task_id;
@@ -32,8 +44,7 @@ typedef struct ISC_Task {
     Buffer* out_buf;
     Buffer* context;
 
-    Buffer* dma_buf;
-    isc_dma_direction dir;
+    DMA_Vec dma_vec;
     
     NvmeRequest* req;
     NvmeComputeCmd cmd;
@@ -65,7 +76,7 @@ void check_early_respond_req(FemuCtrl* n, NvmeRequest* req);
 
 NvmeRequest* dequeue_comp_req(FemuCtrl* n);
 
-void enqueue_ftl(FemuCtrl* n, NvmeRequest* req);
+void enqueue_ftl(FemuCtrl* n, ISC_Task* task);
 
 void enqueue_poller(FemuCtrl* n, NvmeRequest* req);
 
@@ -80,6 +91,8 @@ void check_task_ready(ISC_Task* task);
 void launch_task(ISC_Task* task);
 
 void postprocess_task(FemuCtrl* n, ISC_Task* task);
+
+uint16_t flash_dma(FemuCtrl *n, DMA_Vec vec);
 
 uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req);
 

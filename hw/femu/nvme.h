@@ -1383,6 +1383,7 @@ typedef struct FemuCtrl {
     char            devname[64];
     struct rte_ring **to_ftl;
     struct rte_ring **to_poller;
+    struct rte_ring *from_runtime;
     struct rte_ring *to_runtime;
     struct rte_ring *comp_req_queue;
     pqueue_t        **pq;
@@ -1414,6 +1415,7 @@ typedef struct NvmeDifTuple {
 #define SQ_POLLING_PERIOD_NS	(5000)
 #define CQ_POLLING_PERIOD_NS	(5000)
 #define FEMU_MAX_INF_REQS       (65536)
+#define FEMU_MAX_ISC_TASKS      (1024)
 
 enum {
     FEMU_OCSSD_MODE = 0,

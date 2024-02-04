@@ -214,10 +214,9 @@ NvmeRequest* dequeue_comp_req(FemuCtrl* n) {
     return req;
 }
 
-void enqueue_ftl(FemuCtrl* n, NvmeRequest* req) {
-    int poller_id = n->multipoller_enabled ? req->sq->sqid : 1;
-    runtime_log("get a compute req from poller %d, send to ftl\n", poller_id);
-    int rc = femu_ring_enqueue(n->to_ftl[poller_id], (void *)&req, 1);
+void enqueue_ftl(FemuCtrl* n, ISC_Task* task) {
+    runtime_log("get a compute req, send to ftl\n");
+    int rc = femu_ring_enqueue(n->from_runtime, (void *)&task, 1);
     if (rc != 1) {
         femu_err("enqueue to ftl request failed\n");
     }
@@ -234,13 +233,13 @@ void enqueue_poller(FemuCtrl* n, NvmeRequest* req) {
 
 void update_backend_io_timing(FemuCtrl* n) {
     while (femu_ring_count(n->to_runtime)) {
-        NvmeRequest* req = NULL;
-        int rc = femu_ring_dequeue(n->to_runtime, (void *)&req, 1);
+        ISC_Task* task = NULL;
+        int rc = femu_ring_dequeue(n->to_runtime, (void *)&task, 1);
         if (rc != 1) {
             femu_err("dequeue from to_runtime request failed\n");
         }
-        assert(req);
-        pqueue_insert(n->runtime_pq, req);
+        assert(task->req);
+        pqueue_insert(n->runtime_pq, task->req);
     }
 }
 
@@ -284,7 +283,6 @@ void launch_task(ISC_Task* task) {
     
     task->status = TASK_BUSY;
     // task->thread = malloc(sizeof(QemuThread));
-    // hello_world();
     worker(task);
     // qemu_thread_create(task->thread, "isc-worker", worker, task, QEMU_THREAD_JOINABLE);
 }
@@ -313,7 +311,7 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
                 buf_rw(n, req);
                 
                 req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
-                enqueue_ftl(n, req);
+                enqueue_ftl(n, task);
                 return;
             } else {
                 // printf("task %d done\n", task->task_id);
@@ -343,7 +341,6 @@ void* runtime(void* arg) {
     // }
     runtime_log("runtime starts running\n");
     while(1) {
-        // hello_world();
         NvmeRequest* req = dequeue_comp_req(n);
         if (req) {
             ISC_Task* task = alloc_task(req);
@@ -361,7 +358,7 @@ void* runtime(void* arg) {
             if (compute_flag & READ_FLASH) {
                 buf_rw(n, req);
                 // req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
-                enqueue_ftl(n, req);
+                enqueue_ftl(n, task);
                 record_time('r');
             } else {
                 int upstream_id = task->cmd.upstream_id;
@@ -403,7 +400,8 @@ void* runtime(void* arg) {
 void init_runtime(FemuCtrl* n) {
     runtime_log("start init runtime\n");
     n->n_worker = 1;
-    n->to_runtime = femu_ring_create(FEMU_RING_TYPE_MP_SC, FEMU_MAX_INF_REQS);
+    n->from_runtime = femu_ring_create(FEMU_RING_TYPE_SP_SC, FEMU_MAX_ISC_TASKS);
+    n->to_runtime = femu_ring_create(FEMU_RING_TYPE_SP_SC, FEMU_MAX_ISC_TASKS);
     n->comp_req_queue = femu_ring_create(FEMU_RING_TYPE_MP_SC, FEMU_MAX_INF_REQS);
 
     n->runtime_pq = pqueue_init(FEMU_MAX_INF_REQS, cmp_pri, get_pri, set_pri,
@@ -417,19 +415,28 @@ void init_runtime(FemuCtrl* n) {
     runtime_log("finish init runtime\n");
 }
 
-uint16_t flash_dma(FemuCtrl *n, Buffer* buf, uint64_t data_size, uint64_t flash_offset, isc_dma_direction dir) {
+uint16_t flash_dma(FemuCtrl *n, DMA_Vec vec) {
     SsdDramBackend *b = n->mbe;
     void* mb = b->logical_space;
-    assert(b->femu_mode == FEMU_BBSSD_MODE, "flash_dma only support black-box SSD");
-    switch (dir) {
-        case ISC_READ_FLASH:
-            memcpy(buf->space, mb + flash_offset, data_size);
-            break;
-        case ISC_WRITE_FLASH:
-            memcpy(mb + + flash_offset, buf->space, data_size);
-            break;
-        default:
-            femu_err("Unsupported flash_dma direction\n");
+    if (b->femu_mode != FEMU_BBSSD_MODE) {
+        femu_err("flash_dma only support black-box SSD\n");
+        abort();
+    }
+    for (int i = 0; i < vec.nvec; i++) {
+        DMA_Vec_Entry* entry = &vec.vec[i];
+        int data_size = entry->size;
+        int flash_offset = entry->offset;
+        
+        switch (entry->dir) {
+            case ISC_READ_FLASH:
+                memcpy(entry->buf, mb + flash_offset, data_size);
+                break;
+            case ISC_WRITE_FLASH:
+                memcpy(mb + flash_offset, entry->buf, data_size);
+                break;
+            default:
+                femu_err("Unsupported flash_dma direction\n");
+        }
     }
     return 0;
 }
@@ -476,8 +483,12 @@ uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req)
  
         task->out_buf = alloc_buf(out_buf_size);
     }
-
-    return flash_dma(n, task->in_buf, data_size, data_offset, ISC_READ_FLASH);
+    DMA_Vec dma_vec = {1, g_malloc(sizeof(DMA_Vec_Entry))};
+    dma_vec.vec[0].buf = buf;
+    dma_vec.vec[0].offset = data_offset;
+    dma_vec.vec[0].size = data_size;
+    dma_vec.vec[0].dir = ISC_READ_FLASH;
+    return flash_dma(n, dma_vec);
 }
 
 uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write) {

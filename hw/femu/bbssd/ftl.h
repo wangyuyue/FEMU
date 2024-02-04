@@ -2,6 +2,7 @@
 #define __FEMU_FTL_H
 
 #include "../nvme.h"
+#include "../isc_function.h"
 
 #define INVALID_PPA     (~(0ULL))
 #define INVALID_LPN     (~(0ULL))
@@ -206,6 +207,10 @@ struct ssd {
     /* lockless ring for communication with NVMe IO thread */
     struct rte_ring **to_ftl;
     struct rte_ring **to_poller;
+
+    /* lockless ring for communication with the isc runtime */
+    struct rte_ring * from_runtime;
+    struct rte_ring * to_runtime;
     bool *dataplane_started_ptr;
     QemuThread ftl_thread;
 };

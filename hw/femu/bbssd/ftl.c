@@ -858,14 +858,82 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     return maxlat;
 }
 
+static void poll_io(struct ssd* ssd, int i /* poller id */) {
+    NvmeRequest* req;
+    uint64_t lat;
+    int rc;
+
+    if (!ssd->to_ftl[i] || !femu_ring_count(ssd->to_ftl[i]))
+        return;
+    
+    rc = femu_ring_dequeue(ssd->to_ftl[i], (void *)&req, 1);
+    if (rc != 1) {
+        printf("FEMU: FTL to_ftl dequeue failed\n");
+    }
+
+    ftl_assert(req);
+    switch (req->cmd.opcode) {
+    case NVME_CMD_WRITE:
+        lat = ssd_write(ssd, req);
+        break;
+    case NVME_CMD_READ:
+        lat = ssd_read(ssd, req);
+        break;
+    case NVME_CMD_DSM:
+        lat = 0;
+        break;
+    default:
+        assert (req->cmd.opcode != NVME_CMD_OFFLOAD);
+        lat = 0;
+        //ftl_err("FTL received unkown request type, ERROR\n");
+        ;
+    }
+
+    req->reqlat = lat;
+    req->expire_time += lat;
+    
+    rc = femu_ring_enqueue(ssd->to_poller[i], (void *)&req, 1);
+    if (rc != 1) {
+        ftl_err("FTL to_poller enqueue failed\n");
+    }
+
+    /* clean one line if needed (in the background) */
+    if (should_gc(ssd)) {
+        do_gc(ssd, false);
+    }
+}
+
+static void handle_runtime_query(struct ssd* ssd) {
+    ISC_Task* task;
+    NvmeRequest* req;
+    uint64_t lat;
+    int rc;
+
+    if (!ssd->from_runtime || !femu_ring_count(ssd->from_runtime))
+        return;
+
+    rc = femu_ring_dequeue(ssd->from_runtime, (void *)&task, 1);
+    if (rc != 1) {
+        printf("FEMU: FTL from_runtime dequeue failed\n");
+    }
+    ftl_assert(task);
+    req = task->req;
+    ftl_assert(req);
+    ftl_assert(req->cmd.opcode == NVME_CMD_OFFLOAD);
+    lat = ssd_read(ssd, req);
+    req->reqlat = lat;
+    req->expire_time += lat;
+    
+    rc = femu_ring_enqueue(ssd->to_runtime, (void*)&task, 1);
+    if (rc != 1) {
+        ftl_err("FTL to_runtime enqueue failed\n");
+    }
+}
+
 static void *ftl_thread(void *arg)
 {
     FemuCtrl *n = (FemuCtrl *)arg;
     struct ssd *ssd = n->ssd;
-    NvmeRequest *req = NULL;
-    uint64_t lat = 0;
-    int rc;
-    int i;
 
     while (!*(ssd->dataplane_started_ptr)) {
         usleep(100000);
@@ -875,52 +943,15 @@ static void *ftl_thread(void *arg)
     ssd->to_ftl = n->to_ftl;
     ssd->to_poller = n->to_poller;
 
+    ssd->from_runtime = n->from_runtime;
+    ssd->to_runtime = n->to_runtime;
+    ftl_assert(!ssd->from_runtime || ssd->to_runtime);
+
     while (1) {
-        for (i = 1; i <= n->nr_pollers; i++) {
-            if (!ssd->to_ftl[i] || !femu_ring_count(ssd->to_ftl[i]))
-                continue;
-
-            rc = femu_ring_dequeue(ssd->to_ftl[i], (void *)&req, 1);
-            if (rc != 1) {
-                printf("FEMU: FTL to_ftl dequeue failed\n");
-            }
-
-            ftl_assert(req);
-            switch (req->cmd.opcode) {
-            case NVME_CMD_WRITE:
-                lat = ssd_write(ssd, req);
-                break;
-            case NVME_CMD_READ:
-                lat = ssd_read(ssd, req);
-                break;
-            case NVME_CMD_DSM:
-                lat = 0;
-                break;
-            case NVME_CMD_OFFLOAD:
-                lat = ssd_read(ssd, req);
-                // ftl_err("FTL receive offload command that doesn't access flash\n");
-                break;
-            default:
-                //ftl_err("FTL received unkown request type, ERROR\n");
-                ;
-            }
-
-            req->reqlat = lat;
-            req->expire_time += lat;
-
-            if (req->cmd.opcode == NVME_CMD_OFFLOAD)
-                rc = femu_ring_enqueue(n->to_runtime, (void*)&req, 1);
-            else
-                rc = femu_ring_enqueue(ssd->to_poller[i], (void *)&req, 1);
-            if (rc != 1) {
-                ftl_err("FTL to_poller enqueue failed\n");
-            }
-
-            /* clean one line if needed (in the background) */
-            if (should_gc(ssd)) {
-                do_gc(ssd, false);
-            }
+        for (int i = 1; i <= n->nr_pollers; i++) {
+            poll_io(ssd, i);
         }
+        handle_runtime_query(ssd);
     }
 
     return NULL;
