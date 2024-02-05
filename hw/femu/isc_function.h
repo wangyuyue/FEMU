@@ -92,11 +92,13 @@ void launch_task(ISC_Task* task);
 
 void postprocess_task(FemuCtrl* n, ISC_Task* task);
 
-uint16_t flash_dma(FemuCtrl *n, DMA_Vec vec);
+uint16_t flash_dma(FemuCtrl *n, ISC_Task *task);
 
-uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req);
+DMA_Vec dma_vec_for_req(FemuCtrl *n, NvmeRequest* req);
 
-uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write);
+void alloc_task_buf(ISC_Task* task);
+
+uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write);
 
 #define PARAM_SIZE(TYPE) (sizeof(((TYPE*)0)->params))
 

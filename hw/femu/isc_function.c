@@ -304,13 +304,10 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
             TaskContext* ctx = task->context->space;
             if (ctx->done == 0) {
                 uint64_t next_blk = ctx->next_addr[0];
-                NvmeComputeCmd* comp = (NvmeComputeCmd*)&req->cmd;
-                comp->slba = next_blk / 512;
+                task->dma_vec.vec[0].offset = next_blk;
                 task->status = TASK_VALID;
                 runtime_log("next block %p, resubmit\n", (void*)next_blk);
-                buf_rw(n, req);
-                
-                req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+                flash_dma(n, task);
                 enqueue_ftl(n, task);
                 return;
             } else {
@@ -319,7 +316,7 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
         }
         int is_write = 0;
         
-        buf_dma(n, req, task->out_buf->space, task->out_buf->size, is_write);
+        host_dma(n, req, task->out_buf->space, task->out_buf->size, is_write);
 
         record_time('r');
 
@@ -348,7 +345,7 @@ void* runtime(void* arg) {
             if (COMPUTE_FLAG(&req->cmd) & HAS_CONTEXT) {
                 int is_write = 1;
                 runtime_log("compute req has context, write context to device memory\n");
-                buf_dma(n, req, APP_CONTEXT(task->context->space), param_size[task->cmd.func_id], is_write);
+                host_dma(n, req, APP_CONTEXT(task->context->space), param_size[task->cmd.func_id], is_write);
                 runtime_log("finish device memory write\n");
             }
 
@@ -356,8 +353,15 @@ void* runtime(void* arg) {
             assert((compute_flag & WRITE_FLASH) == 0);
             assert((compute_flag & HOST_TO_BUF) == 0);
             if (compute_flag & READ_FLASH) {
-                buf_rw(n, req);
-                // req->expire_time = req->stime = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+                task->dma_vec = dma_vec_for_req(n, req);
+                if (task->dma_vec.nvec == 0) {
+                    runtime_log("read flash dma failed\n");
+                    enqueue_poller(n, req);
+                    clear_task(task);
+                    continue;
+                }
+                alloc_task_buf(task);
+                flash_dma(n, task);
                 enqueue_ftl(n, task);
                 record_time('r');
             } else {
@@ -415,13 +419,14 @@ void init_runtime(FemuCtrl* n) {
     runtime_log("finish init runtime\n");
 }
 
-uint16_t flash_dma(FemuCtrl *n, DMA_Vec vec) {
+uint16_t flash_dma(FemuCtrl *n, ISC_Task* task) {
     SsdDramBackend *b = n->mbe;
     void* mb = b->logical_space;
     if (b->femu_mode != FEMU_BBSSD_MODE) {
         femu_err("flash_dma only support black-box SSD\n");
         abort();
     }
+    DMA_Vec vec = task->dma_vec;
     for (int i = 0; i < vec.nvec; i++) {
         DMA_Vec_Entry* entry = &vec.vec[i];
         int data_size = entry->size;
@@ -441,8 +446,7 @@ uint16_t flash_dma(FemuCtrl *n, DMA_Vec vec) {
     return 0;
 }
 
-uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req)
-{
+DMA_Vec dma_vec_for_req(FemuCtrl* n, NvmeRequest* req) {
     NvmeNamespace* ns = req->ns;
 
     NvmeComputeCmd *comp = (NvmeComputeCmd*)&(req->cmd);
@@ -464,34 +468,32 @@ uint16_t buf_rw(FemuCtrl *n, NvmeRequest *req)
 
     err = femu_nvme_rw_check_req(n, ns, (NvmeCmd*)comp, req, slba, elba, nlb, ctrl,
                                  data_size, meta_size);
-    if (err)
-        return err;
+    if (err) {
+        return (DMA_Vec){0, NULL};
+    }
 
     req->slba = slba;
     req->status = NVME_SUCCESS;
     req->nlb = nlb;
-
-    ISC_Task* task = (ISC_Task*)req->isc_task_ptr;
-    // previous buf for a resubmit compute request can be reused here
-    if (task->in_buf == NULL)
-        task->in_buf = alloc_buf(data_size);
-    void* buf = task->in_buf->space;
-    
-    if (task->out_buf == NULL) {
-        int out_buf_size = (ret_val_size[task->cmd.func_id] == 0) ? \
-                        task->in_buf->size : ret_val_size[task->cmd.func_id];
- 
-        task->out_buf = alloc_buf(out_buf_size);
-    }
-    DMA_Vec dma_vec = {1, g_malloc(sizeof(DMA_Vec_Entry))};
-    dma_vec.vec[0].buf = buf;
-    dma_vec.vec[0].offset = data_offset;
-    dma_vec.vec[0].size = data_size;
-    dma_vec.vec[0].dir = ISC_READ_FLASH;
-    return flash_dma(n, dma_vec);
+    DMA_Vec dma_vec = (DMA_Vec){1, g_malloc(sizeof(DMA_Vec_Entry))};
+    dma_vec.vec[0] = (DMA_Vec_Entry){NULL, data_offset, data_size, ISC_READ_FLASH};
+    return dma_vec;
 }
 
-uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write) {
+void alloc_task_buf(ISC_Task* task) {
+    assert(task->in_buf == NULL && task->out_buf == NULL);
+
+    uint32_t in_buf_size = task->dma_vec.vec[0].size;
+    task->in_buf = alloc_buf(in_buf_size);
+    
+    uint32_t out_buf_size = (ret_val_size[task->cmd.func_id] == 0) ? \
+                        task->in_buf->size : ret_val_size[task->cmd.func_id];
+    task->out_buf = alloc_buf(out_buf_size);
+    
+    task->dma_vec.vec[0].buf = task->in_buf->space;
+}
+
+uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write) {
     NvmeComputeCmd *comp = (NvmeComputeCmd *)&(req->cmd);
 
     uint64_t prp1 = le64_to_cpu(comp->prp1);
@@ -517,7 +519,7 @@ uint16_t buf_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is
     DMADirection dir = DMA_DIRECTION_FROM_DEVICE;
 
     if (is_write) {
-        runtime_log("buf_dma write\n");
+        runtime_log("host_dma write\n");
         dir = DMA_DIRECTION_TO_DEVICE;
     }
 
