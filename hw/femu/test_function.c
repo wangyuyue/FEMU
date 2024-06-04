@@ -4,78 +4,84 @@
 #include <string.h>
 #include "test_function.h"
 
-int range_filter(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
+int range_filter(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext* ctx) {
     assert(buf_in != NULL);
     assert(buf_out != NULL);
-    int* params, *data_buf;
-    int n_integer, min_val, max_val;
-    if (arg == NULL){
+    struct {
+        int n_integer;
+        int min_val;
+        int max_val;
+        int data[];
+    } *params;
+    int *data_buf;
+    if (ctx->len == 0) {
         params = buf_in;
-        data_buf = (int*)buf_in + 3;
+        data_buf = params->data;
     } else {
-        params = arg;
-        data_buf = (int*)buf_in;
+        params = (void*)ctx->data;
+        data_buf = buf_in;
     }
-    n_integer = params[0];
-    min_val = params[1];
-    max_val = params[2];
-    int* filter = (int*)buf_out + 1;
-    int n_out = 0;
-    for (int i = 0; i < n_integer; i++) {
-        if (min_val <= data_buf[i] && data_buf[i] <= max_val) {
-            filter[n_out++] = data_buf[i];
+    struct {
+        int n_out;
+        int data[];
+    } *filtered;
+    filtered = buf_out;
+    filtered->n_out = 0;
+    for (int i = 0; i < params->n_integer; i++) {
+        if (params->min_val <= data_buf[i] && data_buf[i] <= params->max_val) {
+            filtered->data[filtered->n_out++] = data_buf[i];
         }
     }
-    *(int*)buf_out = n_out;
     return 0;
 }
 
-int sum(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
+int sum(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext* ctx) {
     assert(buf_in != NULL);
     assert(buf_out != NULL);
-    int* params, *data_buf;
-    int n_integer;
-    if (arg == NULL){
+    struct {
+        int n_integer;
+        int data[];
+    } *params;
+    int* data_buf;
+    if (ctx->len == 0){
         params = buf_in;
-        data_buf = (int*)buf_in + 1;
+        data_buf = params->data;
     } else {
-        params = arg;
-        data_buf = (int*)buf_in;
+        params = (void*)ctx->data;
+        data_buf = buf_in;
+    } 
+    int* result = buf_out;
+    for (int i = 0; i < params->n_integer; i++) {
+        *result += data_buf[i];
     }
-    n_integer = params[0];
-    int result = 0;
-    for (int i = 0; i < n_integer; i++) {
-        result += data_buf[i];
-    }
-    *(int*)buf_out = result;
     return 0;
 }
 
-int traverse(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
+int traverse(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext* ctx) {
     assert(buf_in != NULL);
     assert(buf_out != NULL);
+    struct {
+        int next_blk;
+        char str[];
+    } *params;
+    params = buf_in;
+    assert(ctx != NULL);
 
-    int next_blk = *(int*)buf_in;
-    char* str = (char*)buf_in + sizeof(int);
-
-    TaskContext* ctx = (TaskContext*)arg;
-    
-    if (ctx) {
-        if (next_blk == -1) {
-            ctx->done = 1;
-        } else {
-            ctx->done = 0;
-            ctx->next_addr[0] = next_blk * 512;
-            ctx->size[0] = 512;
-        }
+    if (params->next_blk == -1) {
+        ctx->done = 1;
+    } else {
+        ctx->done = 0;
+        ctx->next_addr[0] = params->next_blk * 512;
+        ctx->size[0] = 512;
     }
-    char* from_str = str;
-    char* to_str = APP_CONTEXT(ctx) + strlen(APP_CONTEXT(ctx));
+
+    char* from_str = params->str;
+    char* to_str = ctx->data + strlen(ctx->data);
 
     while(*from_str)
         *(to_str++) = *(from_str++);
     *to_str = ' ';
-    printf("%d, %s \n", next_blk, str);
+    printf("%d, %s \n", params->next_blk, params->str);
     ctx->done = 1;
     return 0;
 }

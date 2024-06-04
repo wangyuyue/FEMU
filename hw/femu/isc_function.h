@@ -50,6 +50,8 @@ typedef struct ISC_Task {
     NvmeComputeCmd cmd;
 } ISC_Task;
 
+TaskContext* get_ctx(ISC_Task* task);
+
 enum {
     TASK_EMPTY     = 0,
     TASK_VALID     = 1,
@@ -89,6 +91,8 @@ void check_compl_backend_io(FemuCtrl* n);
 void check_task_ready(ISC_Task* task);
 
 void launch_task(ISC_Task* task);
+
+void compl_task(FemuCtrl* n, ISC_Task* task);
 
 void postprocess_task(FemuCtrl* n, ISC_Task* task);
 

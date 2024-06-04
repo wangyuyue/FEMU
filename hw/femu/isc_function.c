@@ -2,6 +2,10 @@
 #include "db_types.h"
 #include "isc_cc.h"
 
+TaskContext* get_ctx(ISC_Task* task) {
+    return (TaskContext*)(task->context->space);
+}
+
 isc_function function_list[] = {
     [0] = range_filter,
     [1] = sum,
@@ -10,6 +14,7 @@ isc_function function_list[] = {
     [4] = kv_range,
     [5] = print_bucket,
     [6] = bighash_lookup,
+    [7] = bighash_remove,
 };
 
 int param_size[] = {
@@ -17,6 +22,7 @@ int param_size[] = {
     [3] = PARAM_SIZE(KVGetContext),
     [4] = PARAM_SIZE(KVRangeContext),
     [6] = 512,
+    [7] = 512,
 };
 
 int app_context_size[] = {
@@ -24,12 +30,14 @@ int app_context_size[] = {
     [3] = sizeof(KVGetContext),
     [4] = sizeof(KVRangeContext),
     [6] = 512,
+    [7] = 512,
 };
 
 int ret_val_size[] = {
     [3] = sizeof(KVGetRetVal),
     [4] = sizeof(KVRangeRetVal),
     [6] = 4096,
+    [7] = 4096,
 };
 
 void free_buf(Buffer* buf) {
@@ -103,13 +111,17 @@ ISC_Task* alloc_task(NvmeRequest* req) {
     memcpy(&(task->cmd), &(req->cmd), sizeof(NvmeComputeCmd));
     task->function = function_list[task->cmd.func_id];
     
+    size_t app_ctx_size = 0;
     if (COMPUTE_FLAG(&req->cmd) & HAS_CONTEXT) {
-        task->context = alloc_buf(sizeof(TaskContext) + app_context_size[task->cmd.func_id]);
+        app_ctx_size = app_context_size[task->cmd.func_id];
+        assert(app_ctx_size > 0);   
     }
+    task->context = alloc_buf(sizeof(TaskContext) + app_ctx_size);
+    get_ctx(task)->len = app_ctx_size;
 
     runtime_log("assign task %d status valid\n", task->task_id);
     task->status = TASK_VALID;
-    req->isc_task_ptr = (uint64_t)task;
+    req->isc_task_ptr = task;
 
     return task;
 }
@@ -142,7 +154,7 @@ void clear_task(ISC_Task* task) {
 }
 
 void check_early_respond_req(FemuCtrl* n, NvmeRequest* req) {
-    ISC_Task* task = (ISC_Task*)(req->isc_task_ptr);
+    ISC_Task* task = req->isc_task_ptr;
     if (task->cmd.compute_flag & BUF_TO_HOST) {
         task->blocking = 1;
     } else {
@@ -182,18 +194,18 @@ static void record_time(char op_c) {
 }
 
 void* worker(void* arg) {
-    ISC_Task* task = (ISC_Task*)arg;
+    ISC_Task* task = arg;
     runtime_log("task %d begin working...\n", task->task_id);
     isc_function func = task->function;
-    char* context_space = NULL;
+    TaskContext* cxt = NULL;
     if (task->context) {
         femu_log("task %d has context\n", task->task_id);
-        context_space = task->context->space;
+        cxt = get_ctx(task);
     }
 
     record_time('r');
     
-    func(task->in_buf->space, task->in_buf->size, task->out_buf->space, task->out_buf->size, context_space);
+    func(task->in_buf->space, task->in_buf->size, task->out_buf->space, task->out_buf->size, cxt);
 
     record_time('r');
     
@@ -246,12 +258,14 @@ void update_backend_io_timing(FemuCtrl* n) {
 void postprocess_backend_io(FemuCtrl* n, NvmeRequest* req) {
     check_early_respond_req(n, req);
         
-    ISC_Task* task = (ISC_Task*)(req->isc_task_ptr);
-    
-    runtime_log("assert for task %d\n", task->task_id);
+    ISC_Task* task = req->isc_task_ptr;
     assert(task->status == TASK_VALID);
-    runtime_log("assign task %d status ready\n", task->task_id);
     
+    if (get_ctx(task)->write_back) {
+        compl_task(n, task);
+        return;
+    }
+    runtime_log("assign task %d ready\n", task->task_id);
     task->status = TASK_READY;
 }
 
@@ -287,13 +301,22 @@ void launch_task(ISC_Task* task) {
     // qemu_thread_create(task->thread, "isc-worker", worker, task, QEMU_THREAD_JOINABLE);
 }
 
+void compl_task(FemuCtrl* n, ISC_Task* task) {
+    NvmeRequest* req = task->req;
+    req->cqe.res64 = task->task_id;
+    enqueue_poller(n, req);
+
+    runtime_log("assign task %d status empty\n", task->task_id);
+    clear_task(task);
+}
+
 void postprocess_task(FemuCtrl* n, ISC_Task* task) {
     if (task->thread) {
         // qemu_thread_join(task->thread);
         free(task->thread);
         task->thread = NULL;
     }
-
+    TaskContext* ctx = get_ctx(task);
     if (task->blocking) {
         runtime_log("get a completed blocking task %d\n", task->task_id);
 
@@ -301,7 +324,6 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
 
         if (COMPUTE_FLAG(&req->cmd) & RESUBMIT) {
             runtime_log("it is a resubmit compute request\n");
-            TaskContext* ctx = task->context->space;
             if (ctx->done == 0) {
                 uint64_t next_blk = ctx->next_addr[0];
                 task->dma_vec.vec[0].offset = next_blk;
@@ -314,24 +336,30 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
                 // printf("task %d done\n", task->task_id);
             }
         }
+        if (ctx->write_back) {
+            task->dma_vec.vec[0].dir = ISC_WRITE_FLASH;
+            task->status = TASK_VALID;
+            runtime_log("write back to flash\n");
+            flash_dma(n, task);
+            enqueue_ftl(n, task);
+        }
+
         int is_write = 0;
         
         host_dma(n, req, task->out_buf->space, task->out_buf->size, is_write);
+        if (ctx->write_back)
+            return;
 
         record_time('r');
 
-        req->cqe.res64 = task->task_id;
-        enqueue_poller(n, req);
-
-        runtime_log("assign task %d status empty\n", task->task_id);
-        clear_task(task);
+        compl_task(n, task);
 
         record_time('p');
     }
 }
 
 void* runtime(void* arg) {
-    FemuCtrl* n = (FemuCtrl*)arg;
+    FemuCtrl* n = arg;
     // n->workers = malloc(sizeof(QemuThread) * n->n_worker);
     // for (int i = 0; i < n->n_worker; i++) {
     //     qemu_thread_create(&n->workers[i], "isc-worker", worker_thread, NULL);
@@ -345,7 +373,7 @@ void* runtime(void* arg) {
             if (COMPUTE_FLAG(&req->cmd) & HAS_CONTEXT) {
                 int is_write = 1;
                 runtime_log("compute req has context, write context to device memory\n");
-                host_dma(n, req, APP_CONTEXT(task->context->space), param_size[task->cmd.func_id], is_write);
+                host_dma(n, req, get_ctx(task)->data, param_size[task->cmd.func_id], is_write);
                 runtime_log("finish device memory write\n");
             }
 

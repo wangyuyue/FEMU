@@ -42,7 +42,7 @@ static __inline ptr__t nxt_node(unsigned long key, Node *node) {
 static __inline unsigned int process_leaf(TaskContext *context, Node *node, KVRangeRetVal* ret_val) {
     dbg_print("simplekv-bpf-range: - process_leaf\n");
     dump_node(node);
-    KVRangeContext *query = (KVRangeContext*)APP_CONTEXT(context);
+    KVRangeContext *query = (KVRangeContext*)(context->data);
     key__t first_key = query->params.flags & RNG_BEGIN_EXCLUSIVE ? query->params.range_begin + 1 : query->params.range_begin;
     unsigned int end_inclusive = query->params.flags & RNG_END_INCLUSIVE;
     
@@ -127,7 +127,7 @@ static __inline unsigned int process_leaf(TaskContext *context, Node *node, KVRa
 
 static __inline unsigned int process_value(TaskContext *context, Node* node, KVRangeRetVal *ret_val) {
     dbg_print("simplekv-bpf-range: - process_value\n");
-    KVRangeContext *query = (KVRangeContext*)APP_CONTEXT(context);
+    KVRangeContext *query = (KVRangeContext*)(context->data);
     unsigned int *i = &query->params._node_key_ix;
     unsigned long offset = value_offset(decode(query->_current_node.ptr[*i & KEY_MASK]));
 
@@ -153,7 +153,7 @@ static __inline unsigned int process_value(TaskContext *context, Node* node, KVR
 static __inline unsigned int traverse_index(TaskContext *context, Node *node, KVRangeRetVal* ret_val) {
     dbg_print("simplekv-bpf-range: - traverse_index\n");
     dump_node(node);
-    KVRangeContext *query = (KVRangeContext*)APP_CONTEXT(context);
+    KVRangeContext *query = (KVRangeContext*)(context->data);
     if (node->type == LEAF) {
         query->_current_node = *node;
         return process_leaf(context, node, ret_val);
@@ -166,7 +166,7 @@ static __inline unsigned int traverse_index(TaskContext *context, Node *node, KV
 }
 
 static __inline void update_retval(TaskContext* context, KVRangeRetVal* ret_val) {
-    KVRangeContext* query = (KVRangeContext*)APP_CONTEXT(context);
+    KVRangeContext* query = (KVRangeContext*)(context->data);
     if (!context->done)
         return;
     ret_val->range_begin = query->params.range_begin;
@@ -185,9 +185,8 @@ static __inline void range(KVRangeContext* query, char* range_string) {
     range_string[len] = query->params.flags & RNG_END_INCLUSIVE ? ']' : ')';
 }
 
-int kv_range(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
-    TaskContext* context = (TaskContext*)arg;
-    KVRangeContext *query = (KVRangeContext*)APP_CONTEXT(context);
+int kv_range(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext* ctx) {
+    KVRangeContext *query = (KVRangeContext*)(ctx->data);
     Node *node = (Node *) buf_in;
     KVRangeRetVal* ret_val = (KVRangeRetVal*)buf_out;
     
@@ -202,7 +201,7 @@ int kv_range(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
 
     switch (query->params._state) {
         case RNG_TRAVERSE: {
-            int ret = traverse_index(context, node, ret_val);
+            int ret = traverse_index(ctx, node, ret_val);
             dbg_print("RNG_TRAVERSE return\n");
             return ret;
         }
@@ -211,19 +210,19 @@ int kv_range(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) 
             /* FALL THROUGH */
         case RNG_RESUME: {
             query->_current_node = *node;
-            int ret = process_leaf(context, node, ret_val);
-            update_retval(context, ret_val);
+            int ret = process_leaf(ctx, node, ret_val);
+            update_retval(ctx, ret_val);
             dbg_print("RNG_RESUME return\n");
             return ret;
         }
         case RNG_READ_VALUE: {
-            int ret = process_value(context, node, ret_val);
-            update_retval(context, ret_val);
+            int ret = process_value(ctx, node, ret_val);
+            update_retval(ctx, ret_val);
             dbg_print("RNG_READ_VALUE return\n");
             return ret;
         }
         default:
-            context->done = 1;
+            ctx->done = 1;
             return -1;
     }
 }

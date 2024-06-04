@@ -48,9 +48,8 @@ static __inline ptr__t nxt_node(unsigned long key, Node *node) {
 /* Mask to prevent out of bounds memory access */
 #define EBPF_CONTEXT_MASK SG_KEYS - 1
 
-int kv_get(void* buf_in, int size_in, void* buf_out, int size_out, void* arg) {
-    TaskContext* ctx = (TaskContext*)arg;
-    KVGetContext *query = (KVGetContext*)APP_CONTEXT(ctx);
+int kv_get(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext* ctx) {
+    KVGetContext *query = (KVGetContext*)(ctx->data);
 
     Node *node = (Node *) buf_in;
     KVGetRetVal* ret_val = (KVGetRetVal*)buf_out;
