@@ -1,6 +1,7 @@
 #include "isc_function.h"
 #include "db_types.h"
 #include "isc_cc.h"
+#include "dlrm.h"
 
 TaskContext* get_ctx(ISC_Task* task) {
     return (TaskContext*)(task->context->space);
@@ -15,6 +16,7 @@ isc_function function_list[] = {
     [5] = print_bucket,
     [6] = bighash_lookup,
     [7] = bighash_remove,
+    [8] = recssd_lookup,
 };
 
 int param_size[] = {
@@ -23,6 +25,7 @@ int param_size[] = {
     [4] = PARAM_SIZE(KVRangeContext),
     [6] = 512,
     [7] = 512,
+    [8] = 4096,
 };
 
 int app_context_size[] = {
@@ -31,6 +34,7 @@ int app_context_size[] = {
     [4] = sizeof(KVRangeContext),
     [6] = 512,
     [7] = 512,
+    [8] = 4096,
 };
 
 int ret_val_size[] = {
@@ -38,6 +42,7 @@ int ret_val_size[] = {
     [4] = sizeof(KVRangeRetVal),
     [6] = 4096,
     [7] = 4096,
+    [8] = 4096, // big enough to hold aggregated embedding vectors
 };
 
 void free_buf(Buffer* buf) {
@@ -199,13 +204,17 @@ void* worker(void* arg) {
     isc_function func = task->function;
     TaskContext* cxt = NULL;
     if (task->context) {
-        femu_log("task %d has context\n", task->task_id);
+        runtime_log("task %d has context\n", task->task_id);
         cxt = get_ctx(task);
     }
 
     record_time('r');
-    
-    func(task->in_buf->space, task->in_buf->size, task->out_buf->space, task->out_buf->size, cxt);
+
+    void* buf_in = task->in_buf ? task->in_buf->space : NULL;
+    int in_size = task->in_buf ? task->in_buf->size : 0;
+    void* buf_out = task->out_buf ? task->out_buf->space : NULL;
+    int out_size = task->out_buf ? task->out_buf->size : 0;
+    func(buf_in, in_size, buf_out, out_size, cxt);
 
     record_time('r');
     
@@ -311,12 +320,14 @@ void compl_task(FemuCtrl* n, ISC_Task* task) {
 }
 
 void postprocess_task(FemuCtrl* n, ISC_Task* task) {
+    runtime_log("postprocess task %d\n", task->task_id);
     if (task->thread) {
         // qemu_thread_join(task->thread);
         free(task->thread);
         task->thread = NULL;
     }
     TaskContext* ctx = get_ctx(task);
+    runtime_log("blocking: %d\n", task->blocking);
     if (task->blocking) {
         runtime_log("get a completed blocking task %d\n", task->task_id);
 
@@ -325,10 +336,8 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
         if (COMPUTE_FLAG(&req->cmd) & RESUBMIT) {
             runtime_log("it is a resubmit compute request\n");
             if (ctx->done == 0) {
-                uint64_t next_blk = ctx->next_addr[0];
-                task->dma_vec.vec[0].offset = next_blk;
+                set_dma_vec_for_task(n, task);
                 task->status = TASK_VALID;
-                runtime_log("next block %p, resubmit\n", (void*)next_blk);
                 flash_dma(n, task);
                 enqueue_ftl(n, task);
                 return;
@@ -365,6 +374,7 @@ void* runtime(void* arg) {
     //     qemu_thread_create(&n->workers[i], "isc-worker", worker_thread, NULL);
     // }
     runtime_log("runtime starts running\n");
+    tables = init_tables(1, (int[]){512}, n->cxl_cache_mem.addr, n->cxl_cache_mem.size);
     while(1) {
         NvmeRequest* req = dequeue_comp_req(n);
         if (req) {
@@ -381,7 +391,7 @@ void* runtime(void* arg) {
             assert((compute_flag & WRITE_FLASH) == 0);
             assert((compute_flag & HOST_TO_BUF) == 0);
             if (compute_flag & READ_FLASH) {
-                task->dma_vec = dma_vec_for_req(n, req);
+                set_dma_vec_for_req(n, req);
                 if (task->dma_vec.nvec == 0) {
                     runtime_log("read flash dma failed\n");
                     enqueue_poller(n, req);
@@ -392,6 +402,9 @@ void* runtime(void* arg) {
                 flash_dma(n, task);
                 enqueue_ftl(n, task);
                 record_time('r');
+            } else if (task->function == function_list[8]) {
+                task->status = TASK_READY;
+                check_early_respond_req(n, req);
             } else {
                 int upstream_id = task->cmd.upstream_id;
                 ISC_Task* upstream_task = get_task_by_id(upstream_id);
@@ -448,6 +461,7 @@ void init_runtime(FemuCtrl* n) {
 }
 
 uint16_t flash_dma(FemuCtrl *n, ISC_Task* task) {
+    runtime_log("flash_dma\n");
     SsdDramBackend *b = n->mbe;
     void* mb = b->logical_space;
     if (b->femu_mode != FEMU_BBSSD_MODE) {
@@ -459,7 +473,11 @@ uint16_t flash_dma(FemuCtrl *n, ISC_Task* task) {
         DMA_Vec_Entry* entry = &vec.vec[i];
         int data_size = entry->size;
         int flash_offset = entry->offset;
-        
+        runtime_log("flash_offset: %d, data_size: %d\n", flash_offset, data_size);
+        if(entry->buf == NULL) {
+            femu_err("flash_dma buf is NULL\n");
+            return 1;
+        }
         switch (entry->dir) {
             case ISC_READ_FLASH:
                 memcpy(entry->buf, mb + flash_offset, data_size);
@@ -474,9 +492,10 @@ uint16_t flash_dma(FemuCtrl *n, ISC_Task* task) {
     return 0;
 }
 
-DMA_Vec dma_vec_for_req(FemuCtrl* n, NvmeRequest* req) {
-    NvmeNamespace* ns = req->ns;
+void set_dma_vec_for_req(FemuCtrl* n, NvmeRequest* req) {
+    ISC_Task* task = req->isc_task_ptr;
 
+    NvmeNamespace* ns = req->ns;
     NvmeComputeCmd *comp = (NvmeComputeCmd*)&(req->cmd);
     uint16_t ctrl = le16_to_cpu(comp->control);
     uint32_t nlb  = le16_to_cpu(comp->nlb) + 1;
@@ -497,31 +516,58 @@ DMA_Vec dma_vec_for_req(FemuCtrl* n, NvmeRequest* req) {
     err = femu_nvme_rw_check_req(n, ns, (NvmeCmd*)comp, req, slba, elba, nlb, ctrl,
                                  data_size, meta_size);
     if (err) {
-        return (DMA_Vec){0, NULL};
+        task->dma_vec = (DMA_Vec){0};
+        return;
     }
 
     req->slba = slba;
     req->status = NVME_SUCCESS;
     req->nlb = nlb;
-    DMA_Vec dma_vec = (DMA_Vec){1, g_malloc(sizeof(DMA_Vec_Entry))};
-    dma_vec.vec[0] = (DMA_Vec_Entry){NULL, data_offset, data_size, ISC_READ_FLASH};
-    return dma_vec;
+    task->dma_vec = (DMA_Vec){1, data_size, g_malloc(sizeof(DMA_Vec_Entry))};
+    task->dma_vec.vec[0] = (DMA_Vec_Entry){NULL, data_offset, data_size, ISC_READ_FLASH};
+    return;
+}
+
+void set_dma_vec_for_task(FemuCtrl* n, ISC_Task* task) {
+    TaskContext* ctx = get_ctx(task);
+    int n_vec = 0;
+    int total_size = 0;
+    while (ctx->size[n_vec] != 0) {
+        total_size += ctx->size[n_vec];
+        n_vec++;
+    }
+    DMA_Vec dma_vec = (DMA_Vec){n_vec, total_size, g_malloc(sizeof(DMA_Vec_Entry) * n_vec)};
+    for (int i = 0; i < n_vec; i++) {
+        dma_vec.vec[i] = (DMA_Vec_Entry){NULL, ctx->next_addr[i], ctx->size[i], ISC_READ_FLASH};
+    }
+    int old_nvec = task->dma_vec.nvec;
+    if (old_nvec > 0)
+        g_free(task->dma_vec.vec);
+    task->dma_vec = dma_vec;
+    alloc_task_buf(task);
+    return;
 }
 
 void alloc_task_buf(ISC_Task* task) {
-    assert(task->in_buf == NULL && task->out_buf == NULL);
-
-    uint32_t in_buf_size = task->dma_vec.vec[0].size;
-    task->in_buf = alloc_buf(in_buf_size);
-    
+    runtime_log("alloc task buf\n");
+    if (task->in_buf)
+        free_buf(task->in_buf);
+    if (task->out_buf)
+        free_buf(task->out_buf);
+    task->in_buf = alloc_buf(task->dma_vec.total_size);
     uint32_t out_buf_size = (ret_val_size[task->cmd.func_id] == 0) ? \
                         task->in_buf->size : ret_val_size[task->cmd.func_id];
     task->out_buf = alloc_buf(out_buf_size);
     
-    task->dma_vec.vec[0].buf = task->in_buf->space;
+    uint32_t offset = 0;
+    for (int i = 0; i < task->dma_vec.nvec; i++) {
+        task->dma_vec.vec[i].buf = task->in_buf->space + offset;
+        offset += task->dma_vec.vec[i].size;
+    }
 }
 
 uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int is_write) {
+    runtime_log("host_dma\n");
     NvmeComputeCmd *comp = (NvmeComputeCmd *)&(req->cmd);
 
     uint64_t prp1 = le64_to_cpu(comp->prp1);
@@ -545,7 +591,6 @@ uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int i
     dma_addr_t cur_addr, cur_len;
 
     DMADirection dir = DMA_DIRECTION_FROM_DEVICE;
-
     if (is_write) {
         runtime_log("host_dma write\n");
         dir = DMA_DIRECTION_TO_DEVICE;
@@ -570,7 +615,7 @@ uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int i
 
     // print buf content
     for (int i = 0; i < 50; i++) {
-        printf("%d ", ((char*)buf)[i]);
+        runtime_log("%d ", ((char*)buf)[i]);
     }
     return NVME_SUCCESS;
 }

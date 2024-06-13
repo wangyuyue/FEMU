@@ -74,7 +74,6 @@ int traverse(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext
         ctx->next_addr[0] = params->next_blk * 512;
         ctx->size[0] = 512;
     }
-
     char* from_str = params->str;
     char* to_str = ctx->data + strlen(ctx->data);
 
@@ -82,6 +81,5 @@ int traverse(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext
         *(to_str++) = *(from_str++);
     *to_str = ' ';
     printf("%d, %s \n", params->next_blk, params->str);
-    ctx->done = 1;
     return 0;
 }

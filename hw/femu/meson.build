@@ -13,8 +13,22 @@ bighash_deps+= [dependency('glog')]
 bighash_deps+= [dependency('double-conversion')]
 
 cache_files = ['flash-cache/bighash/Bucket.cpp', 'flash-cache/bighash/BucketStorage.cpp', 'flash-cache/common/Buffer.cpp', 'flash-cache/common/Hash.cpp', 'flash-cache/common/Types.cpp']
-libbighash = static_library('libbighash', sources: files('isc_cc.cpp', cache_files), dependencies: bighash_deps, include_directories: local_include, cpp_args: ['-Wno-undef'])
+bighash = static_library('bighash', sources: files('isc_cc.cpp', cache_files), dependencies: bighash_deps, include_directories: local_include, cpp_args: ['-Wno-undef'])
 
-bighash = declare_dependency(link_with : libbighash)
+bighash_dep = declare_dependency(link_with : bighash)
 
-softmmu_ss.add(bighash)
+softmmu_ss.add(bighash_dep)
+
+dlrm_include = include_directories('.')
+
+dlrm = static_library('dlrm', 
+  sources: files('dlrm.c'), 
+  c_args: ['-mavx'],
+  include_directories: dlrm_include
+)
+
+# Declare the dependency for the dlrm library
+dlrm_dep = declare_dependency(link_with: dlrm, include_directories:dlrm_include)
+
+# Add the dlrm dependency to softmmu_ss
+softmmu_ss.add(dlrm_dep)

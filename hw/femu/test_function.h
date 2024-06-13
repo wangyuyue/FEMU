@@ -14,7 +14,7 @@ FUNCTION_DECLARATION(traverse);
 FUNCTION_DECLARATION(kv_get);
 FUNCTION_DECLARATION(kv_range);
 
-#define N_NEXT_ADDR 16
+#define N_NEXT_ADDR 512
 
 typedef struct TaskContext {
     int done;

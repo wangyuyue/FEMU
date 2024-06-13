@@ -876,6 +876,10 @@ static uint64_t ssd_read_vecs(struct ssd *ssd, DMA_Vec dma_vec, int64_t now_time
     /* Assume no overlapping page between dma vectors */
     for (int i = 0; i < dma_vec.nvec; i++) {
         DMA_Vec_Entry* entry = &dma_vec.vec[i];
+        if (entry->dir != ISC_READ_FLASH) {
+            ftl_err("DMA direction does not match FLASH READ\n");
+            continue;
+        }
         uint64_t lba = entry->offset / spp->secsz;
         int nsecs = entry->size / spp->secsz;
         start_lpn = lba / spp->secs_per_pg;
@@ -904,6 +908,10 @@ static uint64_t ssd_write_vecs(struct ssd *ssd, DMA_Vec dma_vec, int64_t now_tim
     }
     for (int i = 0; i < dma_vec.nvec; i++) {
         DMA_Vec_Entry* entry = &dma_vec.vec[i];
+        if (entry->dir != ISC_WRITE_FLASH) {
+            ftl_err("DMA direction does not match FLASH WRITE\n");
+            continue;
+        }
         uint64_t lba = entry->offset / spp->secsz;
         int nsecs = entry->size / spp->secsz;
         start_lpn = lba / spp->secs_per_pg;

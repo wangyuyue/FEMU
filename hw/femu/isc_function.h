@@ -27,6 +27,7 @@ typedef struct DMA_Vec_Entry {
 
 typedef struct DMA_Vec {
     int nvec;
+    int total_size;
     DMA_Vec_Entry* vec; // Pointer to an array of DMA_Vec_Entry structures
 } DMA_Vec;
 
@@ -98,7 +99,9 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task);
 
 uint16_t flash_dma(FemuCtrl *n, ISC_Task *task);
 
-DMA_Vec dma_vec_for_req(FemuCtrl *n, NvmeRequest* req);
+void set_dma_vec_for_req(FemuCtrl *n, NvmeRequest* req);
+
+void set_dma_vec_for_task(FemuCtrl* n, ISC_Task* task);
 
 void alloc_task_buf(ISC_Task* task);
 
@@ -108,7 +111,7 @@ uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int i
 
 // uint16_t nvme_rw2(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req);
 
-#if 1
+#if 0
 #define runtime_log(fmt, ...) do { printf("[ISC RUNTIME] Log: " fmt, ## __VA_ARGS__); } while (0)
 #else
 #define runtime_log(fmt, ...) do { } while (0)
