@@ -4,8 +4,10 @@
 #include "dlrm.h"
 
 TaskContext* get_ctx(ISC_Task* task) {
-    return (TaskContext*)(task->context->space);
+    return (TaskContext*)(task->context_buf->space);
 }
+
+DlrmShared dlrm_shared;
 
 isc_function function_list[] = {
     [0] = range_filter,
@@ -121,7 +123,7 @@ ISC_Task* alloc_task(NvmeRequest* req) {
         app_ctx_size = app_context_size[task->cmd.func_id];
         assert(app_ctx_size > 0);   
     }
-    task->context = alloc_buf(sizeof(TaskContext) + app_ctx_size);
+    task->context_buf = alloc_buf(sizeof(TaskContext) + app_ctx_size);
     get_ctx(task)->len = app_ctx_size;
 
     runtime_log("assign task %d status valid\n", task->task_id);
@@ -147,9 +149,9 @@ void clear_task(ISC_Task* task) {
     task->in_buf = NULL;
     task->out_buf = NULL;
 
-    if (task->context)
-        free_buf(task->context);
-    task->context = NULL;
+    if (task->context_buf)
+        free_buf(task->context_buf);
+    task->context_buf = NULL;
 
     task->upstream = NULL;
 
@@ -203,7 +205,7 @@ void* worker(void* arg) {
     runtime_log("task %d begin working...\n", task->task_id);
     isc_function func = task->function;
     TaskContext* cxt = NULL;
-    if (task->context) {
+    if (task->context_buf) {
         runtime_log("task %d has context\n", task->task_id);
         cxt = get_ctx(task);
     }
@@ -374,7 +376,7 @@ void* runtime(void* arg) {
     //     qemu_thread_create(&n->workers[i], "isc-worker", worker_thread, NULL);
     // }
     runtime_log("runtime starts running\n");
-    tables = init_tables(1, (int[]){512}, n->cxl_cache_mem.addr, n->cxl_cache_mem.size);
+    init_flash_addr(&dlrm_shared, 1, (int[]){10000}, 0x0);
     while(1) {
         NvmeRequest* req = dequeue_comp_req(n);
         if (req) {
@@ -403,6 +405,7 @@ void* runtime(void* arg) {
                 enqueue_ftl(n, task);
                 record_time('r');
             } else if (task->function == function_list[8]) {
+                get_ctx(task)->shared_obj = &dlrm_shared;
                 task->status = TASK_READY;
                 check_early_respond_req(n, req);
             } else {

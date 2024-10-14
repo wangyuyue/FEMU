@@ -43,7 +43,7 @@ typedef struct ISC_Task {
     struct ISC_Task* upstream;
     Buffer* in_buf;
     Buffer* out_buf;
-    Buffer* context;
+    Buffer* context_buf;
 
     DMA_Vec dma_vec;
     

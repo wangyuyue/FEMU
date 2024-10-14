@@ -22,6 +22,8 @@ typedef struct TaskContext {
 	long size[N_NEXT_ADDR];
     int len;
     int write_back;
+    void* private_obj;
+    void* shared_obj;
     char data[];
 } TaskContext;
 #endif
