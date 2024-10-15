@@ -111,7 +111,7 @@ uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int i
 
 // uint16_t nvme_rw2(FemuCtrl *n, NvmeNamespace *ns, NvmeCmd *cmd, NvmeRequest *req);
 
-#if 0
+#if 1
 #define runtime_log(fmt, ...) do { printf("[ISC RUNTIME] Log: " fmt, ## __VA_ARGS__); } while (0)
 #else
 #define runtime_log(fmt, ...) do { } while (0)

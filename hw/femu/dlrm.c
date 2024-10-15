@@ -6,13 +6,14 @@
 #include <string.h>
 
 void init_flash_addr(DlrmShared* obj, int num_table, int num_emb[], size_t nvme_addr) {
-    GenericArray* tables = malloc(sizeof(GenericArray) * num_table);
+    Array2D* tables = malloc(sizeof(Array2D) * num_table);
     void* addr = (void*)nvme_addr;
     for (int i = 0; i < num_table; i++) {
-        tables[i].len = num_emb[i];
-        tables[i].elem_size = EMB_SIZE;
+        tables[i].dim_o = num_emb[i];
+        tables[i].dim_i = DIM_EMB;
+        tables[i].elem_size = sizeof(float);
         tables[i].data = addr;
-        addr = last_addr(tables[i]);
+        addr = array_tail_2d(tables[i]);
     }
     obj->flash_tables = tables;
     obj->num_table = num_table;
@@ -27,33 +28,9 @@ void simd_add(float* sum, float* vector) {
     }
 }
 
-inline float* get_sum_vector(char* buf_out, int size_out, int idx) {
-    if (idx < size_out / EMB_SIZE) {
-        return (float*)buf_out + idx * DIM_EMB;
-    } else {
-        return NULL;
-    }
-}
-
 inline float* get_flash_vector(char* dram_buf, int n_page, int indice) {
     char* vector = dram_buf + (PAGE_SIZE * n_page) + PAGE_OFFSET(indice * EMB_SIZE);
     return (float*)vector;
-}
-
-// void prepare_resubmit(TaskContext* ctx, size_t table_addr, int n_indice, int* indices) {
-void prepare_resubmit(TaskContext* ctx, DlrmPrivate* private_obj, DlrmShared* shared_obj, int table_id) {
-    int n_indice = private_obj->req_params.indice_nr_list[table_id];
-    int* indices = private_obj->req_params.indice_addr_list[table_id];
-    size_t table_addr = (size_t)shared_obj->flash_tables[table_id].data;
-    for (int i = 0; i < n_indice; i++) {
-        int page_offset = PAGE_ALIGN(indices[i] * EMB_SIZE);
-        ctx->next_addr[i] = table_addr + page_offset;
-        ctx->size[i] = PAGE_SIZE;
-    }
-}
-
-void* get_cached_vector(DlrmShared* dlrm_shared, int table_id, int indice) {
-    return NULL;
 }
 
 inline void set_bitmap(char* bitmap, int seq_id) {
@@ -64,20 +41,43 @@ inline int get_bitmap(char* bitmap, int seq_id) {
     return bitmap[seq_id / 8] & (1 << (seq_id % 8));
 }
 
-inline void* get_page_vector(char* page, int indice) {
-    return page + PAGE_OFFSET(indice * EMB_SIZE);
+void prepare_resubmit(TaskContext* ctx, DlrmPrivate* private_obj, DlrmShared* shared_obj, int table_id) {
+    int n_indice = private_obj->req_params.indice_nr_list[table_id];
+    int* indices = private_obj->req_params.indice_addr_list[table_id];
+    size_t table_addr = (size_t)shared_obj->flash_tables[table_id].data;
+    int n_miss = 0;
+    for (int i = 0; i < n_indice; i++) {
+        float* vector = get_cached_vector(shared_obj, table_id, indices[i]);
+        if (vector != NULL) {
+            continue;
+        }
+        set_bitmap(private_obj->bitmap_list[table_id], i);
+        ctx->next_addr[n_miss] = table_addr + PAGE_ALIGN(indices[i] * EMB_SIZE);
+        ctx->size[n_miss] = PAGE_SIZE;
+        n_miss++;
+    }
 }
 
-inline void* get_fetched_flash_vector(char* page, int seq_id, int indice, char* bitmap) {
-    if (!get_bitmap(bitmap, seq_id))
-        return NULL;
-    return get_page_vector(page, indice);
+void* get_cached_vector(DlrmShared* dlrm_shared, int table_id, int indice) {
+    return NULL;
 }
 
-int get_buf_in_page_nr(TaskContext* ctx, int i) {
-    // return i;
-    int* page_nr = ctx->private_obj;
-    return page_nr[i];
+inline Array1D get_page_vector(char* page, int indice) {
+    return (Array1D){DIM_EMB, sizeof(float), page + PAGE_OFFSET(indice * EMB_SIZE)};
+}
+
+inline int size_2d_array(Array2D arr) {
+    return arr.dim_o * arr.dim_i * arr.elem_size;
+}
+
+void init_result_bufs(DlrmPrivate* dlrm_private) {
+    Array2D* result_bufs = dlrm_private->result_bufs;
+    for (int i = 0; i < dlrm_private->req_params.num_table; i++) {
+        result_bufs[i].dim_o = dlrm_private->req_params.offset_nr_list[i];
+        result_bufs[i].dim_i = DIM_EMB;
+        result_bufs[i].elem_size = sizeof(float);
+        result_bufs[i].data = malloc(size_2d_array(result_bufs[i]));
+    }
 }
 
 void parse_recssd_ctx(RecSSDContext* rec_ctx, RequestParams* req_params) {
@@ -94,21 +94,31 @@ void parse_recssd_ctx(RecSSDContext* rec_ctx, RequestParams* req_params) {
     }
 }
 
-void update_sum_vector(char* buf_in, char* buf_out, int size_out, DlrmPrivate* private_obj, int table_id) {
+void update_sum_vector(char* buf_in, DlrmPrivate* private_obj, int table_id) {
+    printf("update_sum_vector\n");
+    Array2D result_buf = private_obj->result_bufs[table_id];
     int output_index = 0;
-    int n_query = private_obj->req_params.offset_nr_list[table_id];
-    int n_indice = private_obj->req_params.indice_nr_list[table_id];
+    RequestParams* req_params = &private_obj->req_params;
+    int n_query = req_params->offset_nr_list[table_id];
+    int n_indice = req_params->indice_nr_list[table_id];
 
-    int* offsets = private_obj->req_params.offset_addr_list[table_id];
-    int* indices = private_obj->req_params.indice_addr_list[table_id];
+    int* offsets = req_params->offset_addr_list[table_id];
+    int* indices = req_params->indice_addr_list[table_id];
+    int n_miss = 0;
+    Array1D sum_vec = at_ith_2d(result_buf, output_index);
     for (int i = 0; i < n_indice; i++) {
-        if (output_index < n_query && i == offsets[output_index + 1])
+        if (output_index < n_query && i == offsets[output_index + 1]) {
             output_index++;
-        float* sum = get_sum_vector(buf_out, size_out, output_index);
-        char* page = buf_in + i * PAGE_SIZE;
-        float* vector = get_page_vector(page, indices[i]);
-        simd_add(sum, vector);
+            sum_vec = at_ith_2d(result_buf, output_index);
+        }
+        if (get_bitmap(private_obj->bitmap_list[table_id], i)) {
+            char* page = buf_in + n_miss * PAGE_SIZE;
+            Array1D vector = get_page_vector(page, indices[i]);
+            n_miss++;
+            simd_add(sum_vec.data, vector.data);
+        }
     }
+    printf("update_sum_vector done\n");
 }
 
 void* get_private_obj(TaskContext* ctx) {
@@ -128,10 +138,12 @@ void* get_private_obj(TaskContext* ctx) {
 }
 
 int recssd_lookup(void* buf_in, int size_in, void* buf_out, int size_out, TaskContext* ctx) {
+    printf("out_size: %d\n", size_out);
     DlrmShared* dlrm_shared = ctx->shared_obj;
 
     RecSSDContext* rec_ctx = (RecSSDContext*)ctx->data;
     DlrmPrivate* dlrm_private = get_private_obj(ctx);
+    init_result_bufs(dlrm_private);
     RequestParams* params = &dlrm_private->req_params;
 
     // should assert rec_ctx size >= ctx size
@@ -144,10 +156,15 @@ int recssd_lookup(void* buf_in, int size_in, void* buf_out, int size_out, TaskCo
         rec_ctx->state = 1;
     } else {
         dlrm_debug("recssd_lookup: state 1\n");
+        int out_offset = 0;
         for (int i = 0; i < params->num_table; i++) {
             dlrm_debug("recssd_lookup: table %d\n", i);
-            update_sum_vector(buf_in, buf_out, size_out, dlrm_private, i);
+            update_sum_vector(buf_in, dlrm_private, i);
+            int copy_size = size_2d_array(dlrm_private->result_bufs[i]);
+            memcpy(buf_out + out_offset, dlrm_private->result_bufs[i].data, copy_size);
+            out_offset += copy_size;
         }
+        assert(out_offset <= size_out);
         ctx->done = 1;
     }
     return 0;

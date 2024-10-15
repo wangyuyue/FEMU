@@ -53,6 +53,7 @@ void free_buf(Buffer* buf) {
         runtime_log("ref count > 1\n");
         return;
     }
+    runtime_log("free buf space %p\n", buf->space);
     g_free(buf->space);
     g_free(buf);
 }
@@ -60,6 +61,7 @@ void free_buf(Buffer* buf) {
 Buffer* alloc_buf(int size) {
     Buffer* buf = g_malloc(sizeof(Buffer));
     buf->space = g_malloc(size);
+    runtime_log("alloc buf space %p\n", buf->space);
     memset(buf->space, 0, size);
     buf->size = size;
     buf->ref = 1;
@@ -339,6 +341,7 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
             runtime_log("it is a resubmit compute request\n");
             if (ctx->done == 0) {
                 set_dma_vec_for_task(n, task);
+                alloc_task_buf(task);
                 task->status = TASK_VALID;
                 flash_dma(n, task);
                 enqueue_ftl(n, task);
@@ -547,7 +550,6 @@ void set_dma_vec_for_task(FemuCtrl* n, ISC_Task* task) {
     if (old_nvec > 0)
         g_free(task->dma_vec.vec);
     task->dma_vec = dma_vec;
-    alloc_task_buf(task);
     return;
 }
 
@@ -616,9 +618,5 @@ uint16_t host_dma(FemuCtrl *n, NvmeRequest *req, void* buf, int data_size, int i
     runtime_log("dma length: %ld\n", data_offset);
     qemu_sglist_destroy(qsg);
 
-    // print buf content
-    for (int i = 0; i < 50; i++) {
-        runtime_log("%d ", ((char*)buf)[i]);
-    }
     return NVME_SUCCESS;
 }
