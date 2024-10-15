@@ -77,7 +77,7 @@ void init_result_bufs(char* buf_out , int size_out, DlrmPrivate* dlrm_private) {
         result_bufs[i].dim_o = dlrm_private->req_params.offset_nr_list[i];
         result_bufs[i].dim_i = DIM_EMB;
         result_bufs[i].elem_size = sizeof(float);
-        result_bufs[i].data = malloc(size_2d_array(result_bufs[i]) * 2);
+        result_bufs[i].data = malloc(size_2d_array(result_bufs[i]));
         printf("result buf space: %p\n", result_bufs[i].data);
         // result_bufs[i].data = buf_out + offset;
         offset += size_2d_array(result_bufs[i]);
@@ -111,7 +111,7 @@ void update_sum_vector(char* buf_in, DlrmPrivate* private_obj, int table_id) {
     int n_miss = 0;
     Array1D sum_vec = at_ith_2d(result_buf, output_index);
     for (int i = 0; i < n_indice; i++) {
-        if (output_index < n_query && i == offsets[output_index + 1]) {
+        if (output_index + 1 < n_query && i == offsets[output_index + 1]) {
             output_index++;
             sum_vec = at_ith_2d(result_buf, output_index);
         }

@@ -20,10 +20,12 @@ typedef struct {
 } Array2D;
 
 inline void* at_ith_1d(Array1D arr, int i) {
+    assert (i < arr.dim);
     return (char*)arr.data + i * arr.elem_size;
 }
 
 inline Array1D at_ith_2d(Array2D arr, int i) {
+    assert (i < arr.dim_o);
     return (Array1D){arr.dim_i, arr.elem_size, (char*)arr.data + i * arr.dim_i * arr.elem_size};
 }
 
