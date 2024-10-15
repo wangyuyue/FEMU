@@ -81,7 +81,7 @@ void* get_cached_vector(DlrmShared* dlrm_shared, int table_id, int indice);
 
 void prepare_resubmit(TaskContext* ctx, DlrmPrivate* private_obj, DlrmShared* shared_obj, int table_id);
 
-void init_result_bufs(DlrmPrivate* dlrm_private);
+void init_result_bufs(char* buf_out , int size_out, DlrmPrivate* dlrm_private);
 
 void update_sum_vector(char* buf_in, DlrmPrivate* private_obj, int table_id);
 

@@ -51,7 +51,7 @@ void prepare_resubmit(TaskContext* ctx, DlrmPrivate* private_obj, DlrmShared* sh
         if (vector != NULL) {
             continue;
         }
-        set_bitmap(private_obj->bitmap_list[table_id], i);
+        // set_bitmap(private_obj->bitmap_list[table_id], i);
         ctx->next_addr[n_miss] = table_addr + PAGE_ALIGN(indices[i] * EMB_SIZE);
         ctx->size[n_miss] = PAGE_SIZE;
         n_miss++;
@@ -70,13 +70,17 @@ inline int size_2d_array(Array2D arr) {
     return arr.dim_o * arr.dim_i * arr.elem_size;
 }
 
-void init_result_bufs(DlrmPrivate* dlrm_private) {
+void init_result_bufs(char* buf_out , int size_out, DlrmPrivate* dlrm_private) {
     Array2D* result_bufs = dlrm_private->result_bufs;
+    int offset = 0;
     for (int i = 0; i < dlrm_private->req_params.num_table; i++) {
         result_bufs[i].dim_o = dlrm_private->req_params.offset_nr_list[i];
         result_bufs[i].dim_i = DIM_EMB;
         result_bufs[i].elem_size = sizeof(float);
-        result_bufs[i].data = malloc(size_2d_array(result_bufs[i]));
+        result_bufs[i].data = malloc(size_2d_array(result_bufs[i]) * 2);
+        printf("result buf space: %p\n", result_bufs[i].data);
+        // result_bufs[i].data = buf_out + offset;
+        offset += size_2d_array(result_bufs[i]);
     }
 }
 
@@ -111,12 +115,13 @@ void update_sum_vector(char* buf_in, DlrmPrivate* private_obj, int table_id) {
             output_index++;
             sum_vec = at_ith_2d(result_buf, output_index);
         }
-        if (get_bitmap(private_obj->bitmap_list[table_id], i)) {
+        // if (get_bitmap(private_obj->bitmap_list[table_id], i)) {
             char* page = buf_in + n_miss * PAGE_SIZE;
             Array1D vector = get_page_vector(page, indices[i]);
             n_miss++;
             simd_add(sum_vec.data, vector.data);
-        }
+            printf("sumvec buf space: %p\n", sum_vec.data);
+        // }
     }
     printf("update_sum_vector done\n");
 }
@@ -127,12 +132,13 @@ void* get_private_obj(TaskContext* ctx) {
         return ctx->private_obj;
 
     DlrmPrivate* dlrm_private = malloc(sizeof(DlrmPrivate));
+    printf("dlrm_private buf space: %p\n", dlrm_private);
     parse_recssd_ctx(rec_ctx, &dlrm_private->req_params);
-    for (int i = 0; i < dlrm_private->req_params.num_table; i++) {
-        int len = dlrm_private->req_params.indice_nr_list[i] / 8 + 1;
-        dlrm_private->bitmap_list[i] = malloc(len);
-        memset(dlrm_private->bitmap_list[i], 0, len);
-    }
+    // for (int i = 0; i < dlrm_private->req_params.num_table; i++) {
+        // int len = dlrm_private->req_params.indice_nr_list[i] / 8 + 1;
+        // dlrm_private->bitmap_list[i] = malloc(len);
+        // memset(dlrm_private->bitmap_list[i], 0, len);
+    // }
     ctx->private_obj = dlrm_private;
     return dlrm_private;
 }
@@ -143,7 +149,7 @@ int recssd_lookup(void* buf_in, int size_in, void* buf_out, int size_out, TaskCo
 
     RecSSDContext* rec_ctx = (RecSSDContext*)ctx->data;
     DlrmPrivate* dlrm_private = get_private_obj(ctx);
-    init_result_bufs(dlrm_private);
+    
     RequestParams* params = &dlrm_private->req_params;
 
     // should assert rec_ctx size >= ctx size
@@ -156,6 +162,7 @@ int recssd_lookup(void* buf_in, int size_in, void* buf_out, int size_out, TaskCo
         rec_ctx->state = 1;
     } else {
         dlrm_debug("recssd_lookup: state 1\n");
+        init_result_bufs(buf_out, size_out, dlrm_private);
         int out_offset = 0;
         for (int i = 0; i < params->num_table; i++) {
             dlrm_debug("recssd_lookup: table %d\n", i);
@@ -164,7 +171,7 @@ int recssd_lookup(void* buf_in, int size_in, void* buf_out, int size_out, TaskCo
             memcpy(buf_out + out_offset, dlrm_private->result_bufs[i].data, copy_size);
             out_offset += copy_size;
         }
-        assert(out_offset <= size_out);
+        // assert(out_offset <= size_out);
         ctx->done = 1;
     }
     return 0;
