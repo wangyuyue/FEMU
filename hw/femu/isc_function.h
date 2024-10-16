@@ -22,12 +22,12 @@ typedef struct DMA_Vec_Entry {
     void* buf;
     uint64_t offset;
     uint32_t size;
-    ISC_DMA_Direction dir;
 } DMA_Vec_Entry;
 
 typedef struct DMA_Vec {
     int nvec;
     int total_size;
+    ISC_DMA_Direction dir;
     DMA_Vec_Entry* vec; // Pointer to an array of DMA_Vec_Entry structures
 } DMA_Vec;
 

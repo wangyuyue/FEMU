@@ -154,6 +154,8 @@ void clear_task(ISC_Task* task) {
     if (task->context_buf)
         free_buf(task->context_buf);
     task->context_buf = NULL;
+    g_free(task->dma_vec.vec);
+    task->dma_vec = (DMA_Vec){0};
 
     task->upstream = NULL;
 
@@ -351,7 +353,7 @@ void postprocess_task(FemuCtrl* n, ISC_Task* task) {
             }
         }
         if (ctx->write_back) {
-            task->dma_vec.vec[0].dir = ISC_WRITE_FLASH;
+            task->dma_vec.dir = ISC_WRITE_FLASH;
             task->status = TASK_VALID;
             runtime_log("write back to flash\n");
             flash_dma(n, task);
@@ -484,7 +486,7 @@ uint16_t flash_dma(FemuCtrl *n, ISC_Task* task) {
             femu_err("flash_dma buf is NULL\n");
             return 1;
         }
-        switch (entry->dir) {
+        switch (vec.dir) {
             case ISC_READ_FLASH:
                 memcpy(entry->buf, mb + flash_offset, data_size);
                 break;
@@ -529,8 +531,8 @@ void set_dma_vec_for_req(FemuCtrl* n, NvmeRequest* req) {
     req->slba = slba;
     req->status = NVME_SUCCESS;
     req->nlb = nlb;
-    task->dma_vec = (DMA_Vec){1, data_size, g_malloc(sizeof(DMA_Vec_Entry))};
-    task->dma_vec.vec[0] = (DMA_Vec_Entry){NULL, data_offset, data_size, ISC_READ_FLASH};
+    task->dma_vec = (DMA_Vec){1, data_size, ISC_READ_FLASH, g_malloc(sizeof(DMA_Vec_Entry))};
+    task->dma_vec.vec[0] = (DMA_Vec_Entry){NULL, data_offset, data_size};
     return;
 }
 
@@ -542,9 +544,9 @@ void set_dma_vec_for_task(FemuCtrl* n, ISC_Task* task) {
         total_size += ctx->size[n_vec];
         n_vec++;
     }
-    DMA_Vec dma_vec = (DMA_Vec){n_vec, total_size, g_malloc(sizeof(DMA_Vec_Entry) * n_vec)};
+    DMA_Vec dma_vec = (DMA_Vec){n_vec, total_size, ISC_READ_FLASH, g_malloc(sizeof(DMA_Vec_Entry) * n_vec)};
     for (int i = 0; i < n_vec; i++) {
-        dma_vec.vec[i] = (DMA_Vec_Entry){NULL, ctx->next_addr[i], ctx->size[i], ISC_READ_FLASH};
+        dma_vec.vec[i] = (DMA_Vec_Entry){NULL, ctx->next_addr[i], ctx->size[i]};
     }
     int old_nvec = task->dma_vec.nvec;
     if (old_nvec > 0)
