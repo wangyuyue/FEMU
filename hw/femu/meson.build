@@ -22,7 +22,7 @@ softmmu_ss.add(bighash_dep)
 dlrm_include = include_directories('.')
 
 dlrm = static_library('dlrm', 
-  sources: files('dlrm.c'), 
+  sources: files('dlrm.c', 'lru_cache.c'), 
   c_args: ['-mavx'],
   include_directories: dlrm_include
 )
